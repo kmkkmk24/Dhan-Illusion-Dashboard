@@ -1,0 +1,71 @@
+# ============================================================
+# Illusion Dashboard - Configuration Template
+# ============================================================
+# Copy this file to config.yaml for local development
+# For production, use environment variables instead
+# ============================================================
+
+# ── API Credentials ──
+# For production, set these as environment variables:
+# DHAN_CLIENT_ID, DHAN_API_KEY, DHAN_ACCESS_TOKEN
+dhan:
+  client_id: "YOUR_DHAN_CLIENT_ID"
+  api_key: "YOUR_DHAN_API_KEY"  # Permanent key from Dhan portal
+  access_token: ""  # Optional - auto-generated if empty
+
+# ── Telegram Notifications (Optional) ──
+telegram:
+  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  chat_id: "YOUR_TELEGRAM_CHAT_ID"
+
+# ── Scanner Configuration ──
+scanner:
+  scan_time: "18:30"
+  # Consolidation detection thresholds
+  bb_period: 20
+  bb_std_dev: 2.0
+  bb_lookback_days: 120
+  bb_squeeze_percentile: 20
+  atr_period: 14
+  atr_avg_period: 50
+  atr_compression_ratio: 0.7
+  range_short_period: 10
+  range_long_period: 50
+  range_narrowing_ratio: 0.4
+  # Scoring weights
+  weight_bbw: 0.4
+  weight_atr: 0.3
+  weight_range: 0.3
+  signal_threshold: 0.6
+  # Explosion detection
+  volume_spike_ratio: 1.5
+  volume_avg_period: 20
+
+# ── F&O Scanner Configuration ──
+fno_scanner:
+  ema_fast: 20
+  ema_slow: 50
+  consolidation_period: 10
+  trend_lookback: 40
+  signal_threshold: 0.55
+  top_per_sector: 2
+  top_sectors: 4
+
+# ── Sector Analysis ──
+sector:
+  # Top N sectors to highlight
+  top_sectors: 5
+  # Relative strength lookback periods (days)
+  rs_periods: [5, 10, 20, 50]
+
+# ── Backup Settings ──
+backup:
+  path: ""
+  schedule: "daily"
+  time: "20:00"
+  keep_last: 30
+
+# ── Server Settings ──
+server:
+  host: "127.0.0.1"
+  port: 8000

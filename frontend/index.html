@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Illusion Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' },
+                        profit: '#22c55e',
+                        loss: '#ef4444',
+                    },
+                    fontSize: { '2xs': '0.65rem' }
+                }
+            }
+        }
+    </script>
+    <script>!function(){var t=localStorage.getItem('vcp-theme')||'dark';document.documentElement.setAttribute('data-theme',t)}()</script>
+</head>
+<body class="h-screen flex overflow-hidden text-sm">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand" id="sidebar-brand">
+            <div class="brand-logo">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 16c0 0 2-2 4-2s3 2 5 2 4-4 4-4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M7 10c1.5-3 3-5 5-5s3 1.5 4 3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="18" cy="6" r="2" fill="#22c55e"/>
+                    <path d="M3 20h18" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+                </svg>
+            </div>
+            <div class="brand-text">
+                <div class="brand-title">Illusion</div>
+                <div class="brand-sub">AI Trade Assistant</div>
+            </div>
+        </div>
+
+        <!-- Collapse toggle -->
+        <button onclick="toggleSidebar()" class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse menu">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+
+        <nav class="sidebar-nav">
+            <div onclick="switchTab('sectors')" id="tab-sectors" class="nav-item active">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-6"/></svg>
+                <span>Sectors</span>
+            </div>
+            <div onclick="switchTab('swing')" id="tab-swing" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h4l3-9 4 18 3-9h4"/></svg>
+                <span>Swing Trades</span>
+            </div>
+            <div onclick="switchTab('fno')" id="tab-fno" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+                <span>Stock Options</span>
+            </div>
+            <div onclick="switchTab('journal')" id="tab-journal" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 2v4M16 2v4M4 10h16"/></svg>
+                <span>Trade Journal</span>
+            </div>
+            <div onclick="switchTab('settings')" id="tab-settings" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                <span>Settings</span>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div id="status-indicator" style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:var(--text-muted)">
+                <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span>
+                Online
+            </div>
+            <button onclick="toggleTheme()" class="theme-toggle" title="Toggle theme">
+                <svg id="icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hidden"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                <svg id="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-hidden flex flex-col" style="padding:12px 16px">
+
+        <!-- Sector Analysis Tab -->
+        <section id="content-sectors" class="tab-content flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <h2 class="text-sm font-bold" style="color:var(--text-heading)">Sector Analysis</h2>
+                <button onclick="runSectorAnalysisFromTab()" id="btn-refresh-sectors"
+                    class="btn-primary px-3 py-1 rounded-lg text-2xs">Refresh Sectors</button>
+            </div>
+            <div class="flex gap-3 flex-1 overflow-hidden">
+                <div id="sectors-table-wrap" class="w-1/2 flex-shrink-0 overflow-auto">
+                    <div id="sectors-table" class="glass-card overflow-hidden">
+                        <div class="p-10 text-center" style="color:var(--text-muted)">
+                            <p class="text-sm mb-1">No sector data yet</p>
+                            <p class="text-xs" style="color:var(--text-muted)">Click "Refresh Sectors" to run analysis.</p>
+                        </div>
+                    </div>
+                </div>
+                <div id="sector-stocks-panel" class="w-1/2 flex-shrink-0 hidden overflow-hidden flex flex-col">
+                    <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                        <h3 id="sector-stocks-title" class="text-xs font-semibold" style="color:var(--text-heading)"></h3>
+                        <button onclick="closeSectorStocks()" class="text-2xs" style="color:var(--text-muted);cursor:pointer">Close</button>
+                    </div>
+                    <div class="glass-card-sm p-1.5 mb-1 flex-shrink-0" style="height:220px">
+                        <canvas id="sector-chart"></canvas>
+                    </div>
+                    <div id="sector-stocks-list" class="glass-card-sm overflow-auto flex-1"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Swing Trades Tab -->
+        <section id="content-swing" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-lg font-bold" style="color:var(--text-heading)">Swing Trade Signals</h2>
+                <div class="filter-pills" id="swing-status-filter">
+                    <button class="filter-pill" data-value="" onclick="togglePill(this,'swing')">All</button>
+                    <button class="filter-pill active" data-value="active" onclick="togglePill(this,'swing')">Active</button>
+                    <button class="filter-pill" data-value="exploded" onclick="togglePill(this,'swing')">Exploded</button>
+                    <button class="filter-pill" data-value="invalidated" onclick="togglePill(this,'swing')">Invalidated</button>
+                    <button class="filter-pill" data-value="dismissed" onclick="togglePill(this,'swing')">Dismissed</button>
+                </div>
+            </div>
+            <div id="swing-signals-table" class="glass-card overflow-auto flex-1">
+                <div class="p-10 text-center" style="color:var(--text-muted)">
+                    <p class="text-sm mb-1">No signals yet</p>
+                    <p class="text-xs">Run your first scan from Settings, or wait for the scheduled scan.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- F&O Tab -->
+        <section id="content-fno" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-xs font-bold" style="color:var(--text-heading)">F&O Directional Scanner</h2>
+                    <span class="text-2xs" style="color:var(--text-muted)">75m candles &middot; Sector-first</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="openFnoAddModal()" class="btn-secondary px-2 py-1 rounded-lg text-2xs">+ Add Stock</button>
+                    <div class="filter-pills" id="fno-dir-filter">
+                        <button class="filter-pill active" data-value="" onclick="togglePill(this,'fno')">All</button>
+                        <button class="filter-pill" data-value="CE" onclick="togglePill(this,'fno')">CE</button>
+                        <button class="filter-pill" data-value="PE" onclick="togglePill(this,'fno')">PE</button>
+                    </div>
+                    <div class="filter-pills" id="fno-status-filter">
+                        <button class="filter-pill active" data-value="" onclick="togglePill(this,'fno')">All</button>
+                        <button class="filter-pill" data-value="active" onclick="togglePill(this,'fno')">Active</button>
+                        <button class="filter-pill" data-value="tracking" onclick="togglePill(this,'fno')">Tracking</button>
+                        <button class="filter-pill" data-value="invalidated" onclick="togglePill(this,'fno')">Invalid</button>
+                        <button class="filter-pill" data-value="dismissed" onclick="togglePill(this,'fno')">Dismissed</button>
+                    </div>
+                    <div class="filter-pills" id="fno-score-filter">
+                        <button class="filter-pill active" data-value="" onclick="togglePill(this,'fno')">Any</button>
+                        <button class="filter-pill" data-value="50" onclick="togglePill(this,'fno')">&gt;50%</button>
+                        <button class="filter-pill" data-value="60" onclick="togglePill(this,'fno')">&gt;60%</button>
+                        <button class="filter-pill" data-value="70" onclick="togglePill(this,'fno')">&gt;70%</button>
+                        <button class="filter-pill" data-value="80" onclick="togglePill(this,'fno')">&gt;80%</button>
+                    </div>
+                    <button onclick="runFnoScan()" id="btn-fno-scan" class="btn-primary px-3 py-1 rounded-lg text-2xs">Scan F&O</button>
+                </div>
+            </div>
+            <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                <p id="fno-scan-status" class="text-2xs" style="color:var(--text-muted)"></p>
+                <div id="fno-scheduler-status" class="text-2xs flex items-center gap-1" style="color:var(--text-muted)"></div>
+            </div>
+            <div class="flex gap-3 flex-1 overflow-hidden">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#22c55e">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span> CE Setups (Bullish)
+                    </h3>
+                    <div id="fno-ce-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run F&O scan to find CE setups</div>
+                    </div>
+                </div>
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#ef4444">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;box-shadow:0 0 6px rgba(239,68,68,0.4)"></span> PE Setups (Bearish)
+                    </h3>
+                    <div id="fno-pe-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run F&O scan to find PE setups</div>
+                    </div>
+                </div>
+            </div>
+            <div id="fno-add-modal" class="hidden fixed inset-0 modal-overlay flex items-center justify-center z-50">
+                <div class="modal-card rounded-2xl shadow-xl p-5 w-80">
+                    <h3 class="text-sm font-bold mb-2" style="color:var(--text-heading)">Add Stock to F&O Tracker</h3>
+                    <input type="text" id="fno-add-search" placeholder="Search stock (e.g., APOLLOHOSP)..."
+                        oninput="debounceSearchFno(this.value)" class="themed-input w-full rounded-lg px-3 py-2 text-xs focus:outline-none">
+                    <div id="fno-add-results" class="mt-2 max-h-48 overflow-auto"></div>
+                    <div class="flex justify-end mt-3">
+                        <button onclick="closeFnoAddModal()" class="text-xs" style="color:var(--text-muted);cursor:pointer">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            <!-- Option Analysis Slide Panel -->
+            <div id="option-analysis-panel" class="analysis-panel hidden">
+                <div class="analysis-panel-inner">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 id="analysis-title" class="text-sm font-bold" style="color:var(--text-heading)">Option Analysis</h3>
+                        <button onclick="closeAnalysisPanel()" class="text-xs" style="color:var(--text-muted);cursor:pointer">✕ Close</button>
+                    </div>
+                    <div id="analysis-loading" class="hidden p-10 text-center">
+                        <span class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto"></span>
+                        <p class="text-xs mt-2" style="color:var(--text-muted)">Fetching option chain & analyzing Greeks...</p>
+                    </div>
+                    <div id="analysis-error" class="hidden p-6 text-center">
+                        <p class="text-xs" style="color:#ef4444" id="analysis-error-msg"></p>
+                    </div>
+                    <div id="analysis-content" class="hidden overflow-y-auto" style="max-height:calc(100vh - 160px)"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Trade Journal Tab -->
+        <section id="content-journal" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-lg font-bold" style="color:var(--text-heading)">Trade Journal</h2>
+                <button onclick="openTradeModal()" class="btn-primary px-3 py-1.5 rounded-lg text-xs">+ New Trade</button>
+            </div>
+            <div id="trade-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                <div class="stat-card"><p class="text-2xs uppercase tracking-wide" style="color:var(--text-muted)">Total Trades</p><p id="stat-total" class="text-xl font-bold mt-1" style="color:var(--text-heading)">0</p></div>
+                <div class="stat-card"><p class="text-2xs uppercase tracking-wide" style="color:var(--text-muted)">Win Rate</p><p id="stat-winrate" class="text-xl font-bold mt-1" style="color:var(--text-heading)">0%</p></div>
+                <div class="stat-card"><p class="text-2xs uppercase tracking-wide" style="color:var(--text-muted)">Total P&L</p><p id="stat-pnl" class="text-xl font-bold mt-1" style="color:var(--text-heading)">0</p></div>
+                <div class="stat-card"><p class="text-2xs uppercase tracking-wide" style="color:var(--text-muted)">Best Trade</p><p id="stat-best" class="text-xl font-bold mt-1 text-profit">--</p></div>
+                <div class="stat-card"><p class="text-2xs uppercase tracking-wide" style="color:var(--text-muted)">Worst Trade</p><p id="stat-worst" class="text-xl font-bold mt-1 text-loss">--</p></div>
+            </div>
+            <div id="trades-table" class="glass-card overflow-auto flex-1">
+                <div class="p-10 text-center" style="color:var(--text-muted)">
+                    <p class="text-sm mb-1">No trades logged yet</p>
+                    <p class="text-xs">Click "+ New Trade" to log your first trade.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Settings Tab -->
+        <section id="content-settings" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <h2 class="text-sm font-bold mb-3 flex-shrink-0" style="color:var(--text-heading)">Settings</h2>
+            <div class="grid md:grid-cols-2 gap-3 overflow-auto flex-1">
+                <div class="glass-card p-4 md:col-span-2">
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Run Scanner</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Swing scan: sector momentum first. F&O scan: directional on 75m candles.</p>
+                    <div class="flex gap-2 mb-3">
+                        <button onclick="runScan('swing')" id="btn-scan-swing" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Scan Swing Trades</button>
+                        <button onclick="runScan('fno')" id="btn-scan-fno" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Scan F&O Stocks</button>
+                        <button onclick="runSectorAnalysis()" id="btn-sector-analysis" class="btn-secondary px-3 py-1.5 rounded-lg text-xs">Sector Analysis Only</button>
+                    </div>
+                    <p id="scan-status" class="text-xs" style="color:var(--text-muted)"></p>
+                    <div id="sector-momentum" class="mt-3 hidden">
+                        <h4 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color:var(--text-secondary)">Sector Momentum Rankings</h4>
+                        <div id="sector-list"></div>
+                    </div>
+                </div>
+                <div class="glass-card p-4">
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Instruments</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Download the latest instrument master from Dhan HQ.</p>
+                    <button onclick="refreshInstruments()" id="btn-refresh-instruments" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Refresh Instruments</button>
+                    <p id="instruments-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
+                </div>
+                <div class="glass-card p-4">
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Dhan Token</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Auto-refresh daily at 6 AM. Manual refresh if needed.</p>
+                    <button onclick="refreshDhanToken()" id="btn-refresh-token" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Refresh Token</button>
+                    <p id="token-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
+                </div>
+                <div class="glass-card p-4">
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Database Backup</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Create a backup or restore from previous.</p>
+                    <div class="flex gap-2">
+                        <button onclick="createBackup()" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Backup Now</button>
+                        <button onclick="exportCSV()" class="btn-secondary px-3 py-1.5 rounded-lg text-xs">Export CSV</button>
+                    </div>
+                    <div id="backup-list" class="mt-3"></div>
+                </div>
+                <div class="glass-card p-4" style="border-color:rgba(239,68,68,0.15)">
+                    <h3 class="text-sm font-semibold mb-2" style="color:#ef4444">Reset Signals</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Clear all signals and history. Cannot be undone.</p>
+                    <button onclick="resetSignals()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;border:none;box-shadow:0 2px 10px rgba(239,68,68,0.25);cursor:pointer;font-family:'Quicksand',sans-serif;font-weight:600" class="px-3 py-1.5 rounded-lg text-xs transition-all hover:shadow-lg">Reset All Signals</button>
+                </div>
+                <div class="glass-card p-4">
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Search Instruments</h3>
+                    <input type="text" id="instrument-search" placeholder="Search by symbol (e.g., RELIANCE, TCS)..."
+                        oninput="debounceSearch(this.value)" class="themed-input w-full rounded-lg px-3 py-2 text-xs focus:outline-none">
+                    <div id="search-results" class="mt-3"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>

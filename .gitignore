@@ -1,0 +1,107 @@
+# ============================================================
+# Dhan Illusion Dashboard - Git Ignore
+# ============================================================
+
+# Environment Variables & Secrets
+.env
+config.yaml
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/trades.db
+data/backups/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Data files
+data/
+*.csv
+*.json
+*.xlsx
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Node modules (if any frontend deps)
+node_modules/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Environments
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

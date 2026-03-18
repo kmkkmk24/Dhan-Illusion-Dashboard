@@ -1,0 +1,25 @@
+Agenda:
+===================================================================
+To build a personal Trade Suggestion & Tracking platform.
+This platform is specifically for SWING Trades & Stock Options.
+
+Requirements:
+============================================================
+Need a simple frontend dashboard which i can start or stop anytime.
+Backend should run with a cronjob.
+
+
+Design Plan: 
+=============================================================
+Need to use Dhan HQ APIs to get historical data.
+Need to analyze Sectors which are in Momentum.
+Need to analyze Stocks for Swing and Stock Options buying.
+It should also allow me to add few sectors or Stocks manually.
+
+
+Scanning Sectors and Stocks methodology:
+========================================================
+We need to catch the sectors or stocks before they break out.
+the stratagie that we are going to use is consolidation Explosion.
+I will share some of the charts or data to show how to find them.
+we need to use Dhan HQ Data APIs to fetch the historical data to analyze.
