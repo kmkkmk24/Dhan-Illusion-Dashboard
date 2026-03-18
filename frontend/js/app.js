@@ -2403,4 +2403,346 @@ document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initSidebar();
     switchTab('sectors');
+    loadCredentialsStatus();
+    
+    // Make functions globally available for testing
+    window.testCredentials = testCredentials;
+    window.togglePassword = togglePassword;
+    window.saveCredentials = saveCredentials;
+    window.clearCredentials = clearCredentials;
+    window.getCredentialsFromForm = getCredentialsFromForm;
+    window.loadCredentialsStatus = loadCredentialsStatus;
+    
+    console.log('🚀 App initialized. Functions available globally.');
+    console.log('🔧 Debug commands:');
+    console.log('  - testCredentials() - Test the credentials');
+    console.log('  - togglePassword("inputId") - Toggle password visibility');
+    console.log('  - getCredentialsFromForm() - Get form data');
+    console.log('  - loadCredentialsStatus() - Reload status');
 });
+
+// ── Credentials Management Functions ──
+
+function togglePassword(inputId) {
+    console.log('Toggle password called for:', inputId);
+    
+    const input = document.getElementById(inputId);
+    if (!input) {
+        console.error('Input not found:', inputId);
+        return;
+    }
+    
+    const container = input.parentElement;
+    const button = container.querySelector('.toggle-password');
+    
+    if (!button) {
+        console.error('Toggle button not found for:', inputId);
+        return;
+    }
+    
+    console.log('Current input type:', input.type);
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        button.textContent = '🙈';
+        console.log('Changed to text type');
+    } else {
+        input.type = 'password';
+        button.textContent = '👁️';
+        console.log('Changed to password type');
+    }
+}
+
+async function loadCredentialsStatus() {
+    try {
+        const statusDiv = document.getElementById('credentialsStatus');
+        const listDiv = document.getElementById('credentialsList');
+        
+        if (!statusDiv || !listDiv) {
+            console.log('Credentials status elements not found, skipping load');
+            return;
+        }
+        
+        const response = await fetch('/api/settings/credentials/status');
+        const data = await response.json();
+        
+        if (data.configured) {
+            statusDiv.innerHTML = `<div class="success-message">✅ Credentials configured and ready</div>`;
+            
+            const creds = data.credentials;
+            listDiv.innerHTML = `
+                <div class="credentials-list">
+                    <div><strong>Client ID:</strong> ${creds.client_id}</div>
+                    <div><strong>API Key:</strong> ${creds.api_key}</div>
+                    <div><strong>API Secret:</strong> ${creds.api_secret}</div>
+                    <div><strong>PIN:</strong> ${creds.pin}</div>
+                    <div><strong>TOTP Secret:</strong> ${creds.totp_secret}</div>
+                </div>
+            `;
+            
+            // Load current values into form (only non-sensitive fields)
+            const clientIdInput = document.getElementById('clientId');
+            const apiKeyInput = document.getElementById('apiKey');
+            
+            if (clientIdInput) clientIdInput.value = creds.client_id;
+            if (apiKeyInput) apiKeyInput.value = creds.api_key;
+            
+            // Update placeholders for sensitive fields
+            const apiSecretInput = document.getElementById('apiSecret');
+            const pinInput = document.getElementById('dhanPin');
+            const totpInput = document.getElementById('totpSecret');
+            
+            if (apiSecretInput) apiSecretInput.placeholder = `Current: ${creds.api_secret}`;
+            if (pinInput) pinInput.placeholder = `Current: ${creds.pin}`;
+            if (totpInput) totpInput.placeholder = `Current: ${creds.totp_secret}`;
+        } else {
+            statusDiv.innerHTML = `<div class="warning-message">⚠️ No credentials configured</div>`;
+            listDiv.innerHTML = '<div style="color: var(--text-muted);">Please configure your Dhan API credentials</div>';
+        }
+    } catch (error) {
+        console.error('Error loading credentials status:', error);
+        const statusDiv = document.getElementById('credentialsStatus');
+        if (statusDiv) {
+            statusDiv.innerHTML = `<div class="error-message">❌ Error loading credentials status</div>`;
+        }
+    }
+}
+
+async function testCredentials() {
+    console.log('🔧 Test credentials function called');
+    
+    // First, test if elements exist
+    const button = document.getElementById('btn-test-credentials');
+    const statusDiv = document.getElementById('credentialsStatus');
+    
+    console.log('Button found:', !!button);
+    console.log('Status div found:', !!statusDiv);
+    
+    if (!button || !statusDiv) {
+        console.error('❌ Required elements not found');
+        alert('UI elements not found. Check console for details.');
+        return;
+    }
+    
+    // Test form data
+    const credentials = getCredentialsFromForm();
+    if (!credentials) {
+        console.log('❌ No credentials provided');
+        return;
+    }
+    
+    console.log('✅ Credentials obtained from form');
+    
+    // Update UI
+    button.disabled = true;
+    button.textContent = 'Testing...';
+    statusDiv.innerHTML = '<div class="warning-message">🔄 Testing credentials...</div>';
+    
+    try {
+        console.log('📡 Sending test request...');
+        const response = await fetch('/api/settings/credentials/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(credentials)
+        });
+        
+        console.log('📡 Response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('📡 Test response:', data);
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="success-message">
+                    ✅ <strong>Credentials Valid!</strong><br>
+                    🔐 <strong>TOTP Code:</strong> ${data.totp_code || 'Generated successfully'}<br>
+                    <small>Generated at ${new Date().toLocaleTimeString()}</small>
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = `
+                <div class="error-message">
+                    ❌ <strong>Validation Failed</strong><br>
+                    ${data.message || 'Unknown error occurred'}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('❌ Test credentials error:', error);
+        statusDiv.innerHTML = `
+            <div class="error-message">
+                ❌ <strong>Connection Error</strong><br>
+                ${error.message}<br>
+                <small>Check console for details</small>
+            </div>
+        `;
+    } finally {
+        button.disabled = false;
+        button.textContent = 'TEST';
+        console.log('🔧 Test function completed');
+    }
+}
+
+async function saveCredentials() {
+    const credentials = getCredentialsFromForm();
+    if (!credentials) return;
+    
+    const button = document.getElementById('btn-save-credentials');
+    const statusDiv = document.getElementById('credentialsStatus');
+    
+    button.disabled = true;
+    button.textContent = 'Saving...';
+    statusDiv.innerHTML = '<div class="warning-message">🔄 Saving credentials...</div>';
+    
+    try {
+        const response = await fetch('/api/settings/credentials/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(credentials)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div class="success-message">
+                    ✅ ${data.message}<br>
+                    TOTP Test: ${data.totp_test}
+                </div>
+            `;
+            // Reload status to show updated info
+            setTimeout(() => loadCredentialsStatus(), 1000);
+        } else {
+            statusDiv.innerHTML = `
+                <div class="error-message">
+                    ❌ ${data.message}
+                </div>
+            `;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `
+            <div class="error-message">
+                ❌ Error saving credentials: ${error.message}
+            </div>
+        `;
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Save';
+    }
+}
+
+async function clearCredentials() {
+    if (!confirm('Are you sure you want to clear all credentials? This cannot be undone.')) {
+        return;
+    }
+    
+    const button = document.getElementById('btn-clear-credentials');
+    const statusDiv = document.getElementById('credentialsStatus');
+    
+    button.disabled = true;
+    button.textContent = 'Clearing...';
+    
+    try {
+        const response = await fetch('/api/settings/credentials/clear', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            statusDiv.innerHTML = `<div class="success-message">✅ ${data.message}</div>`;
+            
+            // Clear form
+            document.getElementById('clientId').value = '';
+            document.getElementById('apiKey').value = '';
+            document.getElementById('apiSecret').value = '';
+            document.getElementById('dhanPin').value = '';
+            document.getElementById('totpSecret').value = '';
+            
+            // Reload status
+            setTimeout(() => loadCredentialsStatus(), 1000);
+        } else {
+            statusDiv.innerHTML = `<div class="error-message">❌ ${data.message}</div>`;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `<div class="error-message">❌ Error: ${error.message}</div>`;
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Clear';
+    }
+}
+
+function getCredentialsFromForm() {
+    console.log('🔍 Getting credentials from form...');
+    
+    const clientIdEl = document.getElementById('clientId');
+    const apiKeyEl = document.getElementById('apiKey');
+    const apiSecretEl = document.getElementById('apiSecret');
+    const pinEl = document.getElementById('dhanPin');
+    const totpSecretEl = document.getElementById('totpSecret');
+    const statusDiv = document.getElementById('credentialsStatus');
+    
+    // Check if elements exist
+    const elements = { clientIdEl, apiKeyEl, apiSecretEl, pinEl, totpSecretEl };
+    const missingElements = Object.entries(elements).filter(([key, el]) => !el).map(([key]) => key);
+    
+    if (missingElements.length > 0) {
+        console.error('❌ Form elements not found:', missingElements);
+        if (statusDiv) {
+            statusDiv.innerHTML = `<div class="error-message">❌ Form elements not found: ${missingElements.join(', ')}</div>`;
+        }
+        return null;
+    }
+    
+    // Get values
+    const clientId = clientIdEl.value.trim();
+    const apiKey = apiKeyEl.value.trim();
+    const apiSecret = apiSecretEl.value.trim();
+    const pin = pinEl.value.trim();
+    const totpSecret = totpSecretEl.value.trim();
+    
+    console.log('📋 Form values:', { 
+        clientId: clientId || '(empty)', 
+        apiKey: apiKey || '(empty)', 
+        apiSecret: apiSecret ? '***' : '(empty)', 
+        pin: pin ? '***' : '(empty)', 
+        totpSecret: totpSecret ? '***' : '(empty)' 
+    });
+    
+    // Validate required fields
+    const emptyFields = [];
+    if (!clientId) emptyFields.push('Client ID');
+    if (!apiKey) emptyFields.push('API Key');
+    if (!apiSecret) emptyFields.push('API Secret');
+    if (!pin) emptyFields.push('PIN');
+    if (!totpSecret) emptyFields.push('TOTP Secret');
+    
+    if (emptyFields.length > 0) {
+        if (statusDiv) {
+            statusDiv.innerHTML = `<div class="error-message">❌ Please fill in: <strong>${emptyFields.join(', ')}</strong></div>`;
+        }
+        return null;
+    }
+    
+    // Validate PIN format
+    if (pin.length !== 6 || !/^\d+$/.test(pin)) {
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class="error-message">❌ <strong>PIN must be exactly 6 digits</strong></div>';
+        }
+        return null;
+    }
+    
+    console.log('✅ Form validation passed');
+    
+    return {
+        client_id: clientId,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        pin: pin,
+        totp_secret: totpSecret
+    };
+}

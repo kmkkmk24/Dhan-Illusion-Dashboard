@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from backend.models.database import get_db
 from backend.models.schemas import BackupInfo, BackupConfigUpdate
 from backend.services import instrument_manager, backup_manager
+from backend.services.settings_manager import settings_manager
 from backend.services.scanner_engine import ScannerEngine
 from backend.services.sector_analyzer import SectorAnalyzer, get_top_sectors
 from backend.services.sector_mapping import (
@@ -438,3 +439,134 @@ def export_trades_csv():
     """Export the trade journal to a CSV file."""
     csv_path = backup_manager.export_trades_csv()
     return {"message": "Trades exported", "path": csv_path}
+
+
+# ── Credentials Management ──
+
+@router.get("/credentials/status")
+def get_credentials_status():
+    """Get current credentials status (masked)."""
+    try:
+        masked_creds = settings_manager.get_masked_credentials()
+        if not masked_creds:
+            return {
+                "configured": False,
+                "message": "No credentials configured"
+            }
+        
+        return {
+            "configured": True,
+            "credentials": masked_creds,
+            "message": "Credentials configured"
+        }
+        
+    except Exception as e:
+        return {
+            "configured": False,
+            "error": str(e),
+            "message": "Error loading credentials"
+        }
+
+
+@router.post("/credentials/save")
+async def save_credentials(credentials: dict):
+    """Save new credentials securely."""
+    try:
+        # Validate required fields
+        required_fields = ["client_id", "api_key", "api_secret", "pin", "totp_secret"]
+        missing_fields = [field for field in required_fields if not credentials.get(field)]
+        
+        if missing_fields:
+            return {
+                "success": False,
+                "message": f"Missing required fields: {', '.join(missing_fields)}"
+            }
+        
+        # Test credentials first
+        test_result = settings_manager.test_credentials(credentials)
+        if not test_result["success"]:
+            return {
+                "success": False,
+                "message": f"Credential validation failed: {test_result['message']}"
+            }
+        
+        # Save credentials
+        if settings_manager.save_credentials(credentials):
+            # Update environment variables
+            settings_manager.update_environment_variables(credentials)
+            
+            return {
+                "success": True,
+                "message": "Credentials saved and validated successfully",
+                "totp_test": test_result["totp_code"]
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to save credentials"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error saving credentials: {str(e)}"
+        }
+
+
+@router.post("/credentials/test")
+async def test_credentials(credentials: dict):
+    """Test credentials without saving."""
+    try:
+        result = settings_manager.test_credentials(credentials)
+        return result
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error testing credentials: {str(e)}"
+        }
+
+
+@router.post("/credentials/clear")
+async def clear_credentials():
+    """Clear all stored credentials."""
+    try:
+        if settings_manager.clear_credentials():
+            return {
+                "success": True,
+                "message": "Credentials cleared successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to clear credentials"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error clearing credentials: {str(e)}"
+        }
+
+
+@router.get("/credentials/export")
+def export_credentials():
+    """Export credentials status for backup."""
+    try:
+        export_data = settings_manager.export_settings()
+        if export_data:
+            return {
+                "success": True,
+                "data": export_data
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No credentials to export"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error exporting credentials: {str(e)}"
+        }

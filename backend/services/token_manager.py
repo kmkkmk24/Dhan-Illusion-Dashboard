@@ -22,11 +22,19 @@ async def check_and_renew_token():
     """Check token expiry and renew if needed."""
     try:
         client = DhanClient()
+        
+        # If no access token available, try to generate one
+        if not client.access_token:
+            logger.info("No access token found — attempting to generate one")
+            await _renew_and_save_token()
+            return
+        
         profile = await client.get_profile()
         await client.close()
 
         if not profile:
-            logger.warning("Could not fetch profile — token may be invalid")
+            logger.warning("Could not fetch profile — token may be invalid, attempting renewal")
+            await _renew_and_save_token()
             return
 
         token_validity = profile.get("tokenValidity", "")
@@ -49,41 +57,55 @@ async def check_and_renew_token():
 
     except Exception as e:
         logger.error(f"Token check error: {e}")
+        # If there's an error, try to generate a new token
+        await _renew_and_save_token()
 
 
 async def _renew_and_save_token():
-    """Renew token and update config.yaml."""
+    """Generate/renew token using TOTP or renewal and update environment."""
     try:
+        import os
         client = DhanClient()
-        result = await client.renew_token()
+        
+        # Try to renew existing token first (if available)
+        if client.access_token:
+            logger.info("Attempting to renew existing token...")
+            result = await client.renew_token()
+            
+            if result.get("success") and result.get("new_token"):
+                # Update environment variable for this session
+                os.environ["DHAN_ACCESS_TOKEN"] = result["new_token"]
+                logger.info("✅ Token renewed successfully")
+                await client.close()
+                return
+            else:
+                logger.warning("Token renewal failed, trying TOTP generation...")
+        
+        # Try TOTP-based token generation if credentials are available
+        dhan_pin = os.environ.get("DHAN_PIN")
+        totp_secret = os.environ.get("DHAN_TOTP_SECRET")
+        
+        if dhan_pin and totp_secret:
+            logger.info("Attempting TOTP-based token generation...")
+            result = await client.generate_access_token_with_totp(dhan_pin, totp_secret)
+            
+            if result.get("success") and result.get("new_token"):
+                os.environ["DHAN_ACCESS_TOKEN"] = result["new_token"]
+                logger.info("✅ Fresh token generated using TOTP")
+                await client.close()
+                return
+        
+        # Fallback: manual token generation required
+        logger.warning("❌ Token generation failed - no TOTP credentials available")
+        logger.info("Please manually generate a new token from Dhan web interface:")
+        logger.info("1. Go to https://web.dhan.co/")
+        logger.info("2. My Profile → Access DhanHQ APIs → Generate Access Token")
+        logger.info("3. Set the token as DHAN_ACCESS_TOKEN environment variable")
+        
         await client.close()
 
-        if not result or not result.get("accessToken"):
-            logger.error("Token renewal failed — no new token returned")
-            return
-
-        new_token = result["accessToken"]
-        expiry = result.get("expiryTime", "")
-        logger.info(f"New token obtained, expires: {expiry}")
-
-        # Update config.yaml
-        config_path = Path(__file__).parent.parent.parent / "config.yaml"
-        if not config_path.exists():
-            logger.error(f"Config file not found: {config_path}")
-            return
-
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-
-        config["dhan"]["access_token"] = new_token
-
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-
-        logger.info("✅ Token renewed and saved to config.yaml")
-
     except Exception as e:
-        logger.error(f"Token renewal error: {e}")
+        logger.error(f"Token generation error: {e}", exc_info=True)
 
 
 def start_token_manager():

@@ -266,10 +266,68 @@
                     <p id="instruments-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
                 </div>
                 <div class="glass-card p-4">
-                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Dhan Token</h3>
-                    <p class="text-xs mb-3" style="color:var(--text-muted)">Auto-refresh daily at 6 AM. Manual refresh if needed.</p>
-                    <button onclick="refreshDhanToken()" id="btn-refresh-token" class="btn-primary px-3 py-1.5 rounded-lg text-xs">Refresh Token</button>
-                    <p id="token-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
+                    <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">🔑 Dhan API Credentials</h3>
+                    <p class="text-xs mb-3" style="color:var(--text-muted)">Configure your Dhan API credentials for automatic token management</p>
+                    
+                    <!-- Credentials Form -->
+                    <div id="credentialsForm" class="space-y-3 mb-4">
+                        <div class="form-group">
+                            <label>Client ID:</label>
+                            <input type="text" id="clientId" placeholder="Your Dhan Client ID">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>API Key:</label>
+                            <input type="text" id="apiKey" placeholder="Your API Key from Dhan Portal">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>API Secret:</label>
+                            <div style="position: relative;">
+                                <input type="password" id="apiSecret" placeholder="Your API Secret" style="padding-right: 50px;">
+                                <button type="button" class="toggle-password" onclick="togglePassword('apiSecret')">👁️</button>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Dhan PIN:</label>
+                            <div style="position: relative;">
+                                <input type="password" id="dhanPin" placeholder="Your 6-digit Dhan PIN" maxlength="6" style="padding-right: 50px;">
+                                <button type="button" class="toggle-password" onclick="togglePassword('dhanPin')">👁️</button>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>TOTP Secret:</label>
+                            <div style="position: relative;">
+                                <input type="password" id="totpSecret" placeholder="TOTP Secret from Authenticator App" style="padding-right: 50px;">
+                                <button type="button" class="toggle-password" onclick="togglePassword('totpSecret')">👁️</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                        <button onclick="testCredentials()" id="btn-test-credentials" class="btn-secondary" style="padding: 10px 16px; border-radius: 6px; font-size: 0.85em; font-weight: 500;">Test</button>
+                        <button onclick="saveCredentials()" id="btn-save-credentials" class="btn-primary" style="padding: 10px 16px; border-radius: 6px; font-size: 0.85em; font-weight: 500;">Save</button>
+                        <button onclick="clearCredentials()" id="btn-clear-credentials" class="btn-danger" style="padding: 10px 16px; border-radius: 6px; font-size: 0.85em; font-weight: 500;">Clear</button>
+                    </div>
+                    
+                    <!-- Status Display -->
+                    <div id="credentialsStatus" class="text-xs mb-3" style="color:var(--text-muted)"></div>
+                    
+                    <!-- Current Configuration -->
+                    <div id="currentCredentials" class="mb-3">
+                        <h4 class="text-xs font-medium mb-1" style="color:var(--text-heading)">Current Status:</h4>
+                        <div id="credentialsList" class="text-xs" style="color:var(--text-muted)"></div>
+                    </div>
+                    
+                    <!-- Manual Token Refresh -->
+                    <div class="border-t pt-3">
+                        <h4 class="text-xs font-medium mb-2" style="color:var(--text-heading)">Manual Token:</h4>
+                        <button onclick="refreshDhanToken()" id="btn-refresh-token" class="btn-secondary px-3 py-1.5 rounded-lg text-xs">Refresh Now</button>
+                        <p id="token-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
+                    </div>
                 </div>
                 <div class="glass-card p-4">
                     <h3 class="text-sm font-semibold mb-2" style="color:var(--text-heading)">Database Backup</h3>
