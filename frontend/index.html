@@ -165,9 +165,41 @@
                         <button class="filter-pill" data-value="70" onclick="togglePill(this,'fno')">&gt;70%</button>
                         <button class="filter-pill" data-value="80" onclick="togglePill(this,'fno')">&gt;80%</button>
                     </div>
+                    <button onclick="toggleFnoScanMode()" id="btn-fno-mode" class="btn-secondary px-3 py-1 rounded-lg text-2xs">Auto Mode</button>
                     <button onclick="runFnoScan()" id="btn-fno-scan" class="btn-primary px-3 py-1 rounded-lg text-2xs">Scan F&O</button>
                 </div>
             </div>
+
+            <!-- Custom Sector Selection Panel (hidden by default) -->
+            <div id="fno-custom-panel" class="hidden mb-3 p-3 rounded-lg flex-shrink-0" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.1)">
+                <div class="flex items-center gap-4 mb-3">
+                    <h3 class="text-xs font-medium" style="color:var(--text-heading)">Custom Sector Selection</h3>
+                    <span class="text-2xs" style="color:var(--text-muted)">Override automatic top/bottom sector selection</span>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-2xs font-medium mb-2 block" style="color:var(--text-secondary)">CE Sectors (Bullish)</label>
+                        <div class="relative">
+                            <select id="fno-ce-sectors" multiple class="w-full p-2 text-2xs rounded border-0 text-white" 
+                                    style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.2);min-height:100px">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                        <p class="text-2xs mt-1" style="color:var(--text-muted)">Hold Ctrl/Cmd to select multiple</p>
+                    </div>
+                    <div>
+                        <label class="text-2xs font-medium mb-2 block" style="color:var(--text-secondary)">PE Sectors (Bearish)</label>
+                        <div class="relative">
+                            <select id="fno-pe-sectors" multiple class="w-full p-2 text-2xs rounded border-0 text-white" 
+                                    style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.2);min-height:100px">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                        <p class="text-2xs mt-1" style="color:var(--text-muted)">Hold Ctrl/Cmd to select multiple</p>
+                    </div>
+                </div>
+            </div>
+
             <div class="flex items-center justify-between mb-1 flex-shrink-0">
                 <p id="fno-scan-status" class="text-2xs" style="color:var(--text-muted)"></p>
                 <div id="fno-scheduler-status" class="text-2xs flex items-center gap-1" style="color:var(--text-muted)"></div>
@@ -322,10 +354,13 @@
                         <div id="credentialsList" class="text-xs" style="color:var(--text-muted)"></div>
                     </div>
                     
-                    <!-- Manual Token Refresh -->
+                    <!-- Manual Token Management -->
                     <div class="border-t pt-3">
-                        <h4 class="text-xs font-medium mb-2" style="color:var(--text-heading)">Manual Token:</h4>
-                        <button onclick="refreshDhanToken()" id="btn-refresh-token" class="btn-secondary px-3 py-1.5 rounded-lg text-xs">Refresh Now</button>
+                        <h4 class="text-xs font-medium mb-2" style="color:var(--text-heading)">Token Management:</h4>
+                        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <button onclick="generateTokenNow()" id="btn-generate-token" class="btn-primary" style="padding: 8px 12px; border-radius: 6px; font-size: 0.8em;">Generate Token</button>
+                            <button onclick="refreshDhanToken()" id="btn-refresh-token" class="btn-secondary" style="padding: 8px 12px; border-radius: 6px; font-size: 0.8em;">Refresh Token</button>
+                        </div>
                         <p id="token-status" class="text-xs mt-2" style="color:var(--text-muted)"></p>
                     </div>
                 </div>

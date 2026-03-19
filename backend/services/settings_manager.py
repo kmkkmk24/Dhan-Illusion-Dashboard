@@ -74,13 +74,14 @@ class SettingsManager:
         """Load and decrypt credentials from file."""
         try:
             if not self.settings_file.exists():
+                logger.info(f"Credentials file does not exist: {self.settings_file}")
                 return None
                 
             with open(self.settings_file, 'rb') as f:
                 encrypted_data = f.read()
             
             credentials = self._decrypt_data(encrypted_data)
-            logger.info("Credentials loaded successfully")
+            logger.info("Credentials loaded successfully from UI")
             return credentials
             
         except Exception as e:

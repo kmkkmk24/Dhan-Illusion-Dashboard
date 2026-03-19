@@ -69,8 +69,9 @@ SECTOR_CONSTITUENTS: dict[str, list[str]] = {
         "INDIANB", "IOB", "BANKINDIA", "CENTRALBK", "MAHABANK",
     ],
     "Nifty Media": [
-        "ZEEL", "PVR", "SUNTV", "NETWORK18", "TV18BRDCST",
-        "DISHTV", "NAZARA", "TIPS",
+        "ZEE MEDIA CORPORATION LTD", "PVR INOX LIMITED", "SUN TV NETWORK LIMITED", 
+        "NETWORK18 MEDIA & INV LTD", "TV TODAY NETWORK LTD",
+        "DISH TV INDIA LTD.", "NAZARA TECHNOLOGIES LTD", "TIPS FILMS LIMITED",
     ],
     "Nifty Fin Services": [
         "HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN",

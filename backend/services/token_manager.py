@@ -81,26 +81,46 @@ async def _renew_and_save_token():
             else:
                 logger.warning("Token renewal failed, trying TOTP generation...")
         
-        # Try TOTP-based token generation if credentials are available
+        # Try UI credentials first
+        from backend.services.settings_manager import settings_manager
+        
+        logger.info("Checking UI credentials...")
+        ui_credentials = settings_manager.load_credentials()
+        
+        if ui_credentials:
+            logger.info("Found UI credentials, attempting TOTP generation...")
+            result = await client.generate_access_token_with_totp(
+                ui_credentials["pin"], 
+                ui_credentials["totp_secret"]
+            )
+            
+            if result.get("success") and result.get("new_token"):
+                os.environ["DHAN_ACCESS_TOKEN"] = result["new_token"]
+                logger.info("✅ Fresh token generated using UI credentials")
+                await client.close()
+                return
+            else:
+                logger.warning("UI credentials failed, trying environment variables...")
+        
+        # Try environment variables as fallback
         dhan_pin = os.environ.get("DHAN_PIN")
         totp_secret = os.environ.get("DHAN_TOTP_SECRET")
         
         if dhan_pin and totp_secret:
-            logger.info("Attempting TOTP-based token generation...")
+            logger.info("Attempting TOTP generation with environment variables...")
             result = await client.generate_access_token_with_totp(dhan_pin, totp_secret)
             
             if result.get("success") and result.get("new_token"):
                 os.environ["DHAN_ACCESS_TOKEN"] = result["new_token"]
-                logger.info("✅ Fresh token generated using TOTP")
+                logger.info("✅ Fresh token generated using environment variables")
                 await client.close()
                 return
         
         # Fallback: manual token generation required
-        logger.warning("❌ Token generation failed - no TOTP credentials available")
-        logger.info("Please manually generate a new token from Dhan web interface:")
-        logger.info("1. Go to https://web.dhan.co/")
-        logger.info("2. My Profile → Access DhanHQ APIs → Generate Access Token")
-        logger.info("3. Set the token as DHAN_ACCESS_TOKEN environment variable")
+        logger.warning("❌ Token generation failed - no credentials available")
+        logger.info("Please either:")
+        logger.info("1. Configure credentials in Settings UI (recommended), OR")
+        logger.info("2. Generate token manually from https://web.dhan.co/")
         
         await client.close()
 

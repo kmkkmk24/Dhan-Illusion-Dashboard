@@ -1577,6 +1577,66 @@ async function _cancelTrade(tradeId, signalId) {
 
 // --- F&O Directional Scanner ---
 
+let fnoScanMode = 'auto'; // 'auto' or 'custom'
+
+function toggleFnoScanMode() {
+    const btn = document.getElementById('btn-fno-mode');
+    const panel = document.getElementById('fno-custom-panel');
+    
+    if (fnoScanMode === 'auto') {
+        fnoScanMode = 'custom';
+        btn.textContent = 'Custom Mode';
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        panel.classList.remove('hidden');
+        loadSectorOptions();
+    } else {
+        fnoScanMode = 'auto';
+        btn.textContent = 'Auto Mode';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+        panel.classList.add('hidden');
+    }
+}
+
+async function loadSectorOptions() {
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/sectors/all`);
+        const sectors = await response.json();
+        
+        const ceSelect = document.getElementById('fno-ce-sectors');
+        const peSelect = document.getElementById('fno-pe-sectors');
+        
+        // Clear existing options
+        ceSelect.innerHTML = '';
+        peSelect.innerHTML = '';
+        
+        // Add sector options sorted by score
+        sectors.forEach(sector => {
+            const option = document.createElement('option');
+            option.value = sector.sector_name;
+            option.textContent = `${sector.sector_name} (${sector.combined_score}%)`;
+            
+            // Add to both selects
+            ceSelect.appendChild(option.cloneNode(true));
+            peSelect.appendChild(option);
+        });
+        
+    } catch (err) {
+        console.error('Error loading sector options:', err);
+    }
+}
+
+function getSelectedCustomSectors() {
+    const ceSelect = document.getElementById('fno-ce-sectors');
+    const peSelect = document.getElementById('fno-pe-sectors');
+    
+    const ceSectors = Array.from(ceSelect.selectedOptions).map(opt => opt.value);
+    const peSectors = Array.from(peSelect.selectedOptions).map(opt => opt.value);
+    
+    return { ceSectors, peSectors };
+}
+
 function groupSignals(signals) {
     const bySecId = {};
     for (const s of signals) {
@@ -1757,7 +1817,7 @@ function renderFnoTable(containerId, groups, cmpMap, direction) {
         <table class="data-table">
             <thead><tr>
                 <th>Symbol</th><th>Sector</th><th>Score</th>
-                <th>Detected At</th><th>CMP</th><th>Days</th><th></th>
+                <th>Entry Price</th><th>CMP</th><th>Days</th><th></th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
@@ -1782,8 +1842,50 @@ async function runFnoScan() {
     statusEl.style.color = '#6366f1';
 
     try {
-        const response = await fetch(`${API_BASE}/api/settings/scan/run?section=fno`, { method: 'POST' });
-        const data = await response.json();
+        let url = `${API_BASE}/api/settings/scan/run?section=fno`;
+        let requestOptions = { method: 'POST' };
+        
+        // If custom mode, send custom sectors
+        if (fnoScanMode === 'custom') {
+            const { ceSectors, peSectors } = getSelectedCustomSectors();
+            
+            if (ceSectors.length === 0 && peSectors.length === 0) {
+                statusEl.textContent = 'Please select at least one sector for CE or PE';
+                statusEl.style.color = '#ef4444';
+                btn.disabled = false;
+                btn.innerHTML = 'Scan F&O';
+                return;
+            }
+            
+            url = `${API_BASE}/api/settings/scan/run/custom`;
+            requestOptions = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    section: 'fno',
+                    ce_sectors: ceSectors,
+                    pe_sectors: peSectors
+                })
+            };
+            
+            statusEl.textContent = `Custom scan: CE sectors: ${ceSectors.join(', ')} | PE sectors: ${peSectors.join(', ')}`;
+        }
+        
+        const response = await fetch(url, requestOptions);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', responseText);
+            throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}...`);
+        }
         const s = data.summary || {};
         const rv = s.revalidation || {};
         let parts = [];
@@ -2412,6 +2514,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.clearCredentials = clearCredentials;
     window.getCredentialsFromForm = getCredentialsFromForm;
     window.loadCredentialsStatus = loadCredentialsStatus;
+    window.generateTokenNow = generateTokenNow;
     
     console.log('🚀 App initialized. Functions available globally.');
     console.log('🔧 Debug commands:');
@@ -2745,4 +2848,65 @@ function getCredentialsFromForm() {
         pin: pin,
         totp_secret: totpSecret
     };
+}
+
+async function generateTokenNow() {
+    console.log('🔧 Generate token now function called');
+    
+    const button = document.getElementById('btn-generate-token');
+    const statusDiv = document.getElementById('token-status');
+    
+    if (!button || !statusDiv) {
+        console.error('❌ Required elements not found');
+        return;
+    }
+    
+    button.disabled = true;
+    button.textContent = 'Generating...';
+    statusDiv.innerHTML = '<div style="color: #f59e0b;">🔄 Generating token using UI credentials...</div>';
+    
+    try {
+        console.log('📡 Sending generate token request...');
+        const response = await fetch('/api/settings/credentials/generate-token', {
+            method: 'POST'
+        });
+        
+        console.log('📡 Response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('📡 Generate token response:', data);
+        
+        if (data.success) {
+            statusDiv.innerHTML = `
+                <div style="color: #10b981; font-weight: 600;">
+                    ✅ <strong>Token Generated!</strong><br>
+                    🔐 Preview: ${data.token_preview}<br>
+                    <small>Generated at ${new Date().toLocaleTimeString()}</small>
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = `
+                <div style="color: #ef4444; font-weight: 600;">
+                    ❌ <strong>Generation Failed</strong><br>
+                    ${data.message}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('❌ Generate token error:', error);
+        statusDiv.innerHTML = `
+            <div style="color: #ef4444; font-weight: 600;">
+                ❌ <strong>Connection Error</strong><br>
+                ${error.message}
+            </div>
+        `;
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Generate Token';
+        console.log('🔧 Generate token function completed');
+    }
 }

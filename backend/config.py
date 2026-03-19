@@ -1,9 +1,12 @@
 import os
+import logging
 from pathlib import Path
 from functools import lru_cache
 from typing import Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
@@ -85,25 +88,43 @@ def get_env_var(var_name: str, required: bool = False) -> Optional[str]:
 
 
 def get_dhan_credentials() -> dict:
-    """Get Dhan credentials from environment variables or config."""
+    """Get Dhan credentials from UI, environment variables, or config."""
+    # Try UI credentials first
+    try:
+        from backend.services.settings_manager import settings_manager
+        ui_credentials = settings_manager.load_credentials()
+        if ui_credentials:
+            logger.info("Using UI credentials for Dhan client")
+            return {
+                "client_id": ui_credentials["client_id"],
+                "api_key": ui_credentials["api_key"],
+                "api_secret": ui_credentials["api_secret"],
+                "access_token": get_env_var("DHAN_ACCESS_TOKEN"),  # Access token from env
+            }
+        else:
+            logger.info("No UI credentials found, falling back to environment variables")
+    except Exception as e:
+        logger.error(f"Error loading UI credentials: {e}")
+        # If UI credentials fail, continue to environment variables
+    
     config = get_config()
     
-    # Try environment variables first, then fall back to config
+    # Try environment variables, then fall back to config
     client_id = get_env_var("DHAN_CLIENT_ID") or config.get("dhan", {}).get("client_id")
     api_key = get_env_var("DHAN_API_KEY") or config.get("dhan", {}).get("api_key")
     api_secret = get_env_var("DHAN_API_SECRET") or config.get("dhan", {}).get("api_secret")
     access_token = get_env_var("DHAN_ACCESS_TOKEN") or config.get("dhan", {}).get("access_token")
     
     if not client_id:
-        raise ValueError("DHAN_CLIENT_ID must be set in environment variables or config.yaml")
+        raise ValueError("DHAN_CLIENT_ID must be set in UI, environment variables, or config.yaml")
     
     # API key is required for production
     if not api_key:
-        raise ValueError("DHAN_API_KEY must be set in environment variables for production use")
+        raise ValueError("DHAN_API_KEY must be set in UI or environment variables for production use")
     
     # API secret might be required for some endpoints
     if not api_secret:
-        raise ValueError("DHAN_API_SECRET must be set in environment variables for production use")
+        raise ValueError("DHAN_API_SECRET must be set in UI or environment variables for production use")
     
     return {
         "client_id": client_id,

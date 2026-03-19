@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from backend.services.sector_mapping import (
 from backend.models.tables import Signal, Instrument
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/instruments/refresh")
@@ -65,78 +67,153 @@ async def run_scan(section: str = "swing", db: Session = Depends(get_db)):
     For 'swing': First runs sector analysis, then scans only stocks in top momentum sectors.
     For 'fno': Sector-first directional scan using 75m candles for CE/PE setups.
     """
-    if section == "fno":
-        from backend.services.fno_scanner import FnoScanner
+    try:
+        if section == "fno":
+            from backend.services.fno_scanner import FnoScanner
 
-        scanner = FnoScanner(db)
+            scanner = FnoScanner(db)
 
-        # Step 1: Revalidate existing active/tracked signals with fresh data
-        reval = await scanner.revalidate_signals("fno")
+            # Step 1: Revalidate existing active/tracked signals with fresh data
+            reval = await scanner.revalidate_signals("fno")
 
-        # Step 2: Run sector analysis to get top sectors
+            # Step 2: Run sector analysis to get top sectors
+            analyzer = SectorAnalyzer(db)
+            sector_results = await analyzer.analyze_sectors()
+
+            if not sector_results:
+                return {
+                    "message": "Sector analysis returned no results. Check API connection.",
+                    "summary": {"revalidation": reval},
+                }
+
+            from backend.config import get_config
+            fno_config = get_config().get("fno_scanner", {})
+            top_n = fno_config.get("top_sectors", 4)
+
+            top_sectors_ce = [s["sector_name"] for s in sector_results[:top_n]]
+            bottom = sector_results[-top_n:]
+            top_sectors_pe = [s["sector_name"] for s in bottom]
+
+            # Step 3: Get F&O instruments
+            instruments = instrument_manager.get_fno_stocks(db)
+            if not instruments:
+                return {
+                    "message": "No instruments loaded. Run 'Refresh Instruments' first.",
+                    "summary": {"revalidation": reval},
+                }
+
+            # Step 4: Discover new setups (reuses the same scanner/dhan client)
+            scanner_fresh = FnoScanner(db)
+            summary = await scanner_fresh.scan_fno(instruments, top_sectors_ce, top_sectors_pe)
+            summary["revalidation"] = reval
+
+            return {
+                "message": f"F&O scan complete: CE sectors={top_sectors_ce}, PE sectors={top_sectors_pe}",
+                "summary": summary,
+            }
+
+        # Swing: sector-first approach
         analyzer = SectorAnalyzer(db)
         sector_results = await analyzer.analyze_sectors()
 
         if not sector_results:
-            return {
-                "message": "Sector analysis returned no results. Check API connection.",
-                "summary": {"revalidation": reval},
-            }
+            return {"message": "Sector analysis returned no results. Check API connection.", "summary": {}}
 
         from backend.config import get_config
-        fno_config = get_config().get("fno_scanner", {})
-        top_n = fno_config.get("top_sectors", 4)
+        top_n = get_config()["sector"]["top_sectors"]
+        top_sectors = [s["sector_name"] for s in sector_results[:top_n]]
 
-        top_sectors_ce = [s["sector_name"] for s in sector_results[:top_n]]
-        bottom = sector_results[-top_n:]
-        top_sectors_pe = [s["sector_name"] for s in bottom]
+        instruments = get_sector_instruments(db, top_sectors)
 
-        # Step 3: Get F&O instruments
+        if not instruments:
+            return {
+                "message": f"No instruments found for top sectors: {', '.join(top_sectors)}. Run 'Refresh Instruments' first.",
+                "summary": {},
+            }
+
+        scanner = ScannerEngine(db)
+        summary = await scanner.scan_stocks(instruments, section)
+        summary["top_sectors"] = top_sectors
+        summary["sector_stocks_count"] = len(instruments)
+
+        return {
+            "message": f"Scan complete: {len(instruments)} stocks from top {top_n} sectors ({', '.join(top_sectors)})",
+            "summary": summary,
+        }
+    
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Scan failed with error: {e}")
+        logger.error(f"Full traceback: {error_details}")
+        
+        return {
+            "error": True,
+            "message": f"Scan failed: {str(e)}",
+            "details": error_details,
+            "section": section
+        }
+
+
+@router.post("/scan/run/custom")
+async def run_custom_scan(request_data: dict, db: Session = Depends(get_db)):
+    """
+    Run a custom F&O scan with user-selected sectors.
+    
+    Expected request_data:
+    {
+        "section": "fno",
+        "ce_sectors": ["Nifty IT", "Nifty Pharma"],
+        "pe_sectors": ["Nifty Media", "Nifty Realty"]
+    }
+    """
+    try:
+        section = request_data.get("section", "fno")
+        ce_sectors = request_data.get("ce_sectors", [])
+        pe_sectors = request_data.get("pe_sectors", [])
+        
+        if section != "fno":
+            return {"error": True, "message": "Custom scan currently only supports F&O section"}
+        
+        if not ce_sectors and not pe_sectors:
+            return {"error": True, "message": "Please provide at least one sector for CE or PE"}
+        
+        from backend.services.fno_scanner import FnoScanner
+        
+        scanner = FnoScanner(db)
+        
+        # Step 1: Revalidate existing active/tracked signals with fresh data
+        reval = await scanner.revalidate_signals("fno")
+        
+        # Step 2: Get F&O instruments
         instruments = instrument_manager.get_fno_stocks(db)
         if not instruments:
             return {
                 "message": "No instruments loaded. Run 'Refresh Instruments' first.",
                 "summary": {"revalidation": reval},
             }
-
-        # Step 4: Discover new setups (reuses the same scanner/dhan client)
+        
+        # Step 3: Run custom sector scan
         scanner_fresh = FnoScanner(db)
-        summary = await scanner_fresh.scan_fno(instruments, top_sectors_ce, top_sectors_pe)
+        summary = await scanner_fresh.scan_fno(instruments, ce_sectors, pe_sectors)
         summary["revalidation"] = reval
-
+        
         return {
-            "message": f"F&O scan complete: CE sectors={top_sectors_ce}, PE sectors={top_sectors_pe}",
+            "message": f"Custom F&O scan complete: CE sectors={ce_sectors}, PE sectors={pe_sectors}",
             "summary": summary,
         }
-
-    # Swing: sector-first approach
-    analyzer = SectorAnalyzer(db)
-    sector_results = await analyzer.analyze_sectors()
-
-    if not sector_results:
-        return {"message": "Sector analysis returned no results. Check API connection.", "summary": {}}
-
-    from backend.config import get_config
-    top_n = get_config()["sector"]["top_sectors"]
-    top_sectors = [s["sector_name"] for s in sector_results[:top_n]]
-
-    instruments = get_sector_instruments(db, top_sectors)
-
-    if not instruments:
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Custom scan failed with error: {e}")
+        logger.error(f"Full traceback: {error_details}")
+        
         return {
-            "message": f"No instruments found for top sectors: {', '.join(top_sectors)}. Run 'Refresh Instruments' first.",
-            "summary": {},
+            "error": True,
+            "message": f"Custom scan failed: {str(e)}",
+            "details": error_details,
         }
-
-    scanner = ScannerEngine(db)
-    summary = await scanner.scan_stocks(instruments, section)
-    summary["top_sectors"] = top_sectors
-    summary["sector_stocks_count"] = len(instruments)
-
-    return {
-        "message": f"Scan complete: {len(instruments)} stocks from top {top_n} sectors ({', '.join(top_sectors)})",
-        "summary": summary,
-    }
 
 
 # In-memory cache for the latest sector analysis results (includes multi-timeframe data)
@@ -297,8 +374,13 @@ def get_sector_stocks(sector_name: str, db: Session = Depends(get_db)):
     if not symbols:
         return []
 
+    # Search in both trading_symbol and symbol fields to handle different symbol formats
+    from sqlalchemy import or_
     instruments = db.query(Instrument).filter(
-        Instrument.trading_symbol.in_(symbols),
+        or_(
+            Instrument.trading_symbol.in_(symbols),
+            Instrument.symbol.in_(symbols)
+        ),
         Instrument.exchange == "NSE",
     ).all()
 
@@ -566,7 +648,89 @@ def export_credentials():
             }
             
     except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error exporting credentials: {str(e)}"
+            }
+
+
+@router.post("/credentials/generate-token")
+async def generate_token_now():
+    """Manually trigger token generation using UI credentials."""
+    try:
+        from backend.services.token_manager import _renew_and_save_token
+        
+        # Trigger token generation
+        await _renew_and_save_token()
+        
+        # Check if token was generated
+        import os
+        access_token = os.environ.get("DHAN_ACCESS_TOKEN")
+        
+        if access_token:
+            return {
+                "success": True,
+                "message": "Token generated successfully",
+                "token_preview": access_token[:20] + "..."
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Token generation failed - check logs"
+            }
+            
+    except Exception as e:
+            return {
+                "success": False,
+                "message": f"Error generating token: {str(e)}"
+            }
+
+
+@router.get("/debug/credentials")
+async def debug_credentials():
+    """Debug endpoint to check credential loading."""
+    try:
+        from backend.config import get_dhan_credentials
+        from backend.services.settings_manager import settings_manager
+        import os
+        
+        # Check UI credentials
+        ui_creds = settings_manager.load_credentials()
+        
+        # Check environment variables
+        env_creds = {
+            "DHAN_CLIENT_ID": os.environ.get("DHAN_CLIENT_ID"),
+            "DHAN_API_KEY": os.environ.get("DHAN_API_KEY"),
+            "DHAN_PIN": os.environ.get("DHAN_PIN"),
+            "DHAN_TOTP_SECRET": os.environ.get("DHAN_TOTP_SECRET", "")[:10] + "..." if os.environ.get("DHAN_TOTP_SECRET") else None,
+            "DHAN_ACCESS_TOKEN": os.environ.get("DHAN_ACCESS_TOKEN", "")[:20] + "..." if os.environ.get("DHAN_ACCESS_TOKEN") else None,
+        }
+        
+        # Check what get_dhan_credentials returns
+        try:
+            final_creds = get_dhan_credentials()
+            final_creds_safe = {
+                "client_id": final_creds.get("client_id"),
+                "api_key": final_creds.get("api_key", "")[:10] + "..." if final_creds.get("api_key") else None,
+                "has_api_secret": bool(final_creds.get("api_secret")),
+                "has_access_token": bool(final_creds.get("access_token"))
+            }
+        except Exception as e:
+            final_creds_safe = {"error": str(e)}
+        
         return {
-            "success": False,
-            "message": f"Error exporting credentials: {str(e)}"
+            "ui_credentials_exist": bool(ui_creds),
+            "ui_credentials": {
+                "client_id": ui_creds.get("client_id") if ui_creds else None,
+                "has_pin": bool(ui_creds.get("pin")) if ui_creds else False,
+                "has_totp_secret": bool(ui_creds.get("totp_secret")) if ui_creds else False,
+            } if ui_creds else None,
+            "environment_variables": env_creds,
+            "final_credentials": final_creds_safe
+        }
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "traceback": __import__('traceback').format_exc()
         }
