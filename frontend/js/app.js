@@ -1092,14 +1092,20 @@ function renderAnalysisPanel(data) {
             </div>` : ''}
 
             <!-- P&L Summary -->
+            ${r.lot_size_warning ? `
+            <div style="padding:8px 10px;border-radius:6px;background:rgba(234,179,8,0.12);font-size:0.55rem;color:#fde68a;margin-bottom:10px;border:1px solid rgba(234,179,8,0.25)">
+                <strong>Lot size not loaded</strong> (F&O lot in DB is 1). Run <strong>Refresh Instruments</strong> so Max P&L/Loss use the correct NSE lot. Below: per-lot using qty × ${data.lot_size}; per-unit premium is ₹${r.max_profit_per_unit != null ? r.max_profit_per_unit.toFixed(2) : '-'} / ₹${r.max_loss_per_unit != null ? r.max_loss_per_unit.toFixed(2) : '-'}.
+            </div>` : ''}
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;border-top:1px solid var(--glass-border);padding-top:10px">
                 <div style="text-align:center">
                     <div style="font-size:0.6rem;color:var(--text-secondary);margin-bottom:2px">Max Profit</div>
                     <div style="font-size:0.8rem;font-weight:700;color:#4ade80">₹${fmtR(r.max_profit)}</div>
+                    <div style="font-size:0.45rem;color:var(--text-secondary);margin-top:2px">1 lot (${data.lot_size} qty)</div>
                 </div>
                 <div style="text-align:center">
                     <div style="font-size:0.6rem;color:var(--text-secondary);margin-bottom:2px">Max Loss</div>
                     <div style="font-size:0.8rem;font-weight:700;color:#f87171">₹${fmtR(r.max_loss)}</div>
+                    <div style="font-size:0.45rem;color:var(--text-secondary);margin-top:2px">1 lot (${data.lot_size} qty)</div>
                 </div>
                 <div style="text-align:center">
                     <div style="font-size:0.6rem;color:var(--text-secondary);margin-bottom:2px">Risk:Reward</div>

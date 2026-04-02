@@ -9,7 +9,9 @@ import logging
 from datetime import datetime
 
 import pandas as pd
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from backend.models.tables import Instrument
 from backend.services.dhan_client import download_scrip_master
@@ -151,10 +153,14 @@ def _update_fno_lot_sizes(db: Session, fno_df) -> None:
         if lot_size <= 0:
             continue
 
-        instrument = db.query(Instrument).filter(
-            Instrument.trading_symbol == underlying,
-            Instrument.exchange == "NSE",
-        ).first()
+        instrument = (
+            db.query(Instrument)
+            .filter(
+                Instrument.exchange == "NSE",
+                func.upper(Instrument.trading_symbol) == underlying.strip().upper(),
+            )
+            .first()
+        )
 
         if instrument:
             instrument.lot_size = lot_size
@@ -174,6 +180,35 @@ def get_all_equity_stocks(db: Session) -> list[Instrument]:
         Instrument.exchange == "NSE",
         Instrument.segment == "E",
     ).all()
+
+
+def get_fno_lot_size_for_underlying(db: Session, instrument: Optional[Instrument]) -> int:
+    """
+    Shares per F&O lot for this underlying (used for option premium P&L).
+
+    Populated from scrip refresh via F&O lot sizes. Returns 1 if unknown — callers
+    should treat P&L as per-share unless lot_size > 1.
+    """
+    if not instrument:
+        return 1
+    if instrument.lot_size and instrument.lot_size > 1:
+        return int(instrument.lot_size)
+    sym = (instrument.trading_symbol or "").strip()
+    if not sym:
+        return 1
+    row = (
+        db.query(Instrument)
+        .filter(
+            Instrument.exchange == "NSE",
+            Instrument.segment == "E",
+            func.upper(Instrument.trading_symbol) == sym.upper(),
+            Instrument.lot_size > 1,
+        )
+        .first()
+    )
+    if row:
+        return int(row.lot_size)
+    return 1
 
 
 def get_nse_cash_equity_shares(db: Session) -> list[Instrument]:

@@ -11,8 +11,25 @@ from backend.models.database import get_db
 from backend.models.tables import Signal, SignalHistory, Instrument, Trade
 from backend.models.schemas import SignalOut, SignalDetailOut, SignalHistoryOut
 from backend.services.dhan_client import DhanClient
+from backend.services.instrument_manager import get_fno_lot_size_for_underlying
 
 logger = logging.getLogger(__name__)
+
+
+def _option_lot_size_from_chain(chain_data: dict) -> int | None:
+    """If Dhan adds lot size to option-chain payload, prefer it over DB."""
+    if not isinstance(chain_data, dict):
+        return None
+    for key in ("lot_size", "sym_lot_size", "market_lot", "LOT_SIZE"):
+        v = chain_data.get(key)
+        if v is not None:
+            try:
+                n = int(float(v))
+                if n > 1:
+                    return n
+            except (TypeError, ValueError):
+                continue
+    return None
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
@@ -248,9 +265,11 @@ async def get_option_cost(data: OptionCostRequest, db: Session = Depends(get_db)
                 instrument = db.query(Instrument).filter(
                     Instrument.security_id == item.security_id
                 ).first()
-                lot_size = instrument.lot_size if instrument and instrument.lot_size > 1 else 1
                 chain = await client.get_option_chain(item.security_id, "NSE_EQ", nearest_expiry)
                 if chain:
+                    lot_size = _option_lot_size_from_chain(
+                        chain.get("data", {}) or {}
+                    ) or get_fno_lot_size_for_underlying(db, instrument)
                     result = _extract_atm_cost(chain, item.direction, lot_size)
                     if result:
                         result["expiry"] = nearest_expiry
@@ -282,11 +301,6 @@ async def stream_option_cost(data: OptionCostRequest, db: Session = Depends(get_
         else:
             uncached_items.append(item)
 
-    instrument_map = {}
-    for item in data.items:
-        inst = db.query(Instrument).filter(Instrument.security_id == item.security_id).first()
-        instrument_map[item.security_id] = inst.lot_size if inst and inst.lot_size > 1 else 1
-
     async def event_generator():
         for item in cached_items:
             payload = json.dumps({item.security_id: _option_cost_cache[item.security_id]})
@@ -312,7 +326,13 @@ async def stream_option_cost(data: OptionCostRequest, db: Session = Depends(get_
                         await asyncio.sleep(1.5)
                     chain = await client.get_option_chain(item.security_id, "NSE_EQ", nearest_expiry)
                     if chain:
-                        result = _extract_atm_cost(chain, item.direction, instrument_map[item.security_id])
+                        inst = db.query(Instrument).filter(
+                            Instrument.security_id == item.security_id
+                        ).first()
+                        lot_size = _option_lot_size_from_chain(
+                            chain.get("data", {}) or {}
+                        ) or get_fno_lot_size_for_underlying(db, inst)
+                        result = _extract_atm_cost(chain, item.direction, lot_size)
                         if result:
                             result["expiry"] = nearest_expiry
                             _option_cost_cache[item.security_id] = result
@@ -512,7 +532,6 @@ async def get_option_analysis(
     instrument = db.query(Instrument).filter(
         Instrument.security_id == signal.security_id
     ).first()
-    lot_size = instrument.lot_size if instrument and instrument.lot_size > 1 else 1
 
     client = DhanClient()
     try:
@@ -567,6 +586,9 @@ async def get_option_analysis(
         chain_data = chain.get("data", {})
         spot_price = chain_data.get("last_price", 0)
         oc = chain_data.get("oc", {})
+
+        lot_from_chain = _option_lot_size_from_chain(chain_data)
+        lot_size = lot_from_chain or get_fno_lot_size_for_underlying(db, instrument)
 
         if not spot_price:
             from fastapi.responses import JSONResponse
@@ -799,9 +821,22 @@ async def get_option_analysis(
             hold_days_min, hold_days_max = 3, 12
 
         theta_daily_cost = abs(recommended["theta"] or 0) * lot_size
-        max_profit = round((premium_target - premium) * lot_size, 2) if premium_target > premium else 0
-        max_loss = round((premium - premium_sl) * lot_size, 2) if premium > premium_sl else round(premium * 0.3 * lot_size, 2)
+        max_profit_per_unit = (
+            round(premium_target - premium, 2) if premium_target > premium else 0
+        )
+        max_loss_per_unit = (
+            round(premium - premium_sl, 2)
+            if premium > premium_sl
+            else round(premium * 0.3, 2)
+        )
+        max_profit = round(max_profit_per_unit * lot_size, 2)
+        max_loss = round(max_loss_per_unit * lot_size, 2)
         risk_reward = round(max_profit / max_loss, 2) if max_loss > 0 else 0
+        lot_size_warning = (
+            lot_size == 1
+            and instrument is not None
+            and getattr(instrument, "is_fno", False)
+        )
 
         # --- Trade advice summary ---
         if risk_reward >= 3:
@@ -866,9 +901,15 @@ async def get_option_analysis(
                 "partial_book_premium": partial_1_premium,
                 "hold_days": f"{hold_days_min}-{hold_days_max}",
                 "theta_daily_cost": round(theta_daily_cost, 2),
+                "max_profit_per_unit": max_profit_per_unit,
+                "max_loss_per_unit": max_loss_per_unit,
                 "max_profit": max_profit,
                 "max_loss": max_loss,
                 "risk_reward": risk_reward,
+                "lot_size_warning": lot_size_warning,
+                "lot_size_source": "chain"
+                if lot_from_chain
+                else ("instrument" if instrument and instrument.lot_size and instrument.lot_size > 1 else "unknown"),
                 "conviction": conviction,
                 "conviction_reason": conviction_reason,
             },
@@ -927,7 +968,6 @@ async def get_expiry_scores(
     instrument = db.query(Instrument).filter(
         Instrument.security_id == signal.security_id
     ).first()
-    lot_size = instrument.lot_size if instrument and instrument.lot_size > 1 else 1
 
     client = DhanClient()
     try:
@@ -1083,7 +1123,6 @@ async def live_advisory(
     instrument = db.query(Instrument).filter(
         Instrument.security_id == signal.security_id
     ).first()
-    lot_size = instrument.lot_size if instrument and instrument.lot_size > 1 else 1
 
     today = date.today()
     exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
@@ -1116,6 +1155,9 @@ async def live_advisory(
             raise HTTPException(status_code=502, detail="Could not fetch live option chain")
 
         chain_data = chain["data"]
+        lot_size = _option_lot_size_from_chain(chain_data) or get_fno_lot_size_for_underlying(
+            db, instrument
+        )
         spot_price = float(chain_data.get("last_price", 0))
         if not spot_price:
             quote = await client.get_market_quote_ohlc([signal.security_id], "NSE_EQ")
