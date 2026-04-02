@@ -174,12 +174,11 @@
 
         <!-- F&O Tab -->
         <section id="content-fno" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
-            <div class="flex items-center justify-between mb-1 flex-shrink-0">
-                <div class="flex items-center gap-2">
-                    <h2 class="text-xs font-bold" style="color:var(--text-heading)">F&O Directional Scanner</h2>
-                    <span class="text-2xs" style="color:var(--text-muted)">75m candles &middot; Sector-first</span>
+            <div class="flex flex-col gap-2 mb-2 flex-shrink-0">
+                <div class="flex items-center justify-center py-2.5 px-3 rounded-lg" style="border:1px solid rgba(45,212,191,0.45);background:rgba(45,212,191,0.04)">
+                    <p class="text-xs font-bold text-center leading-relaxed" style="color:var(--text-heading)">"75m Candle - Consolidation/Explosion setup" | CE: "Strong Stocks from Strong Sectors" | PE: "Weak Stocks from Weak Sectors."</p>
                 </div>
-                <div class="flex items-center gap-3">
+                <div class="flex items-center justify-end flex-wrap gap-3">
                     <button onclick="openFnoAddModal()" class="btn-secondary px-2 py-1 rounded-lg text-2xs">+ Add Stock</button>
                     <div class="filter-pills" id="fno-dir-filter">
                         <button class="filter-pill active" data-value="" onclick="togglePill(this,'fno')">All</button>
