@@ -51,10 +51,11 @@ class DhanClient:
         hist_chunk_pause: Optional[float] = None,
     ):
         creds = get_dhan_credentials()
-        self.client_id = creds["client_id"]
-        self.api_key = creds["api_key"]
-        self.api_secret = creds["api_secret"]
-        self.access_token = creds.get("access_token")  # Can be None initially
+        self.client_id = str(creds["client_id"])
+        self.api_key = str(creds["api_key"])
+        self.api_secret = str(creds["api_secret"])
+        at = creds.get("access_token")
+        self.access_token = str(at) if at is not None else ""
         self._http_client: Optional[httpx.AsyncClient] = None
         # Space out /charts/historical calls (DH-904 if too fast; chunking = multiple calls/symbol)
         self._hist_min_interval = (
@@ -72,9 +73,10 @@ class DhanClient:
 
     @property
     def headers(self) -> dict:
+        # httpx requires str/bytes for every header value (never None).
         return {
-            "access-token": self.access_token,
-            "client-id": self.client_id,
+            "access-token": self.access_token or "",
+            "client-id": str(self.client_id),
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
