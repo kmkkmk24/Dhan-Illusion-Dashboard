@@ -1,4 +1,6 @@
 import logging
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -112,32 +114,136 @@ async def run_scan(section: str = "swing", db: Session = Depends(get_db)):
                 "summary": summary,
             }
 
-        # Swing: sector-first approach
+        # Swing: Enhanced VCP scanner with sector-first approach
         analyzer = SectorAnalyzer(db)
         sector_results = await analyzer.analyze_sectors()
 
         if not sector_results:
             return {"message": "Sector analysis returned no results. Check API connection.", "summary": {}}
 
-        from backend.config import get_config
+        from backend.config import PROJECT_ROOT, get_config
         top_n = get_config()["sector"]["top_sectors"]
         top_sectors = [s["sector_name"] for s in sector_results[:top_n]]
 
-        instruments = get_sector_instruments(db, top_sectors)
-
-        if not instruments:
+        # Cash equities only (ES); other segment-E rows break /charts/historical NSE_EQ.
+        all_instruments = instrument_manager.get_nse_cash_equity_shares(db)
+        if not all_instruments:
             return {
-                "message": f"No instruments found for top sectors: {', '.join(top_sectors)}. Run 'Refresh Instruments' first.",
+                "message": "No instruments loaded. Run 'Refresh Instruments' first.",
                 "summary": {},
             }
 
-        scanner = ScannerEngine(db)
-        summary = await scanner.scan_stocks(instruments, section)
+        sucfg = get_config().get("swing_universe") or {}
+        rebuild_info: dict | None = None
+        if sucfg.get("auto_rebuild_before_scan", True):
+            from backend.services.swing_universe_builder import rebuild_swing_universe_csv
+
+            try:
+                rebuild_info = await rebuild_swing_universe_csv(db)
+                if not rebuild_info.get("ok"):
+                    logger.warning(
+                        "Swing universe auto-rebuild skipped or failed: %s",
+                        rebuild_info.get("error") or rebuild_info,
+                    )
+            except Exception as e:
+                logger.exception("Swing universe auto-rebuild error: %s", e)
+                rebuild_info = {"ok": False, "error": str(e)}
+
+        vcfg = get_config().get("vcp_scanner", {})
+        csv_rel = (vcfg.get("swing_universe_csv") or "").strip()
+        resolved_csv: str | None = None
+        universe_mode = "full"
+        if csv_rel:
+            from backend.services.swing_universe_loader import (
+                load_swing_universe_security_ids,
+            )
+
+            csv_path = Path(csv_rel)
+            if not csv_path.is_absolute():
+                csv_path = PROJECT_ROOT / csv_path
+            if not csv_path.is_file():
+                logger.warning(
+                    "swing_universe_csv=%s not found; scanning full ES universe with "
+                    "smart filter (enable swing_universe.auto_rebuild_before_scan or "
+                    "place swing_universe_latest.csv under data/).",
+                    csv_path,
+                )
+            else:
+                ordered_ids = load_swing_universe_security_ids(csv_path)
+                if not ordered_ids:
+                    logger.warning(
+                        "swing_universe_csv=%s has no ids; scanning full universe.",
+                        csv_path,
+                    )
+                else:
+                    want = set(ordered_ids)
+                    pos = {sid: i for i, sid in enumerate(ordered_ids)}
+                    matched = [
+                        i for i in all_instruments if str(i.security_id) in want
+                    ]
+                    matched.sort(
+                        key=lambda x: pos.get(str(x.security_id), 10**9)
+                    )
+                    if not matched:
+                        return {
+                            "message": (
+                                f"No DB instruments matched ids in {csv_path.name} "
+                                "(refresh instruments or check security_id column)."
+                            ),
+                            "summary": {},
+                        }
+                    all_instruments = matched
+                    resolved_csv = str(csv_path)
+                    universe_mode = "csv"
+                    logger.info(
+                        "Swing scan: restricted to %s instruments from %s",
+                        len(all_instruments),
+                        csv_path.name,
+                    )
+
+        # Use original VCP scanner (same as before)
+        from backend.services.vcp_scanner import VCPScanner
+        vcp_scanner = VCPScanner(db)
+        summary = await vcp_scanner.scan_vcp_patterns(
+            all_instruments, top_sectors, universe_mode=universe_mode
+        )
         summary["top_sectors"] = top_sectors
-        summary["sector_stocks_count"] = len(instruments)
+        summary["total_instruments"] = len(all_instruments)
+        if rebuild_info is not None:
+            summary["swing_universe_rebuild"] = rebuild_info
+        if resolved_csv:
+            summary["swing_universe_csv"] = resolved_csv
+            summary["universe_source"] = "swing_universe_csv"
+
+        prefix = ""
+        if resolved_csv:
+            prefix = f"CSV universe ({summary['total_instruments']} stocks): "
+        msg = (
+            f"{prefix}VCP scan complete: {summary['vcp_signals']} signals found from "
+            f"{summary['scanned']} stocks"
+        )
+        if summary.get("chartink_diagnostics"):
+            na = summary.get("chartink_stocks_analyzed", 0)
+            worst = sorted(
+                summary["chartink_diagnostics"].items(),
+                key=lambda x: x[1]["fail"] - x[1]["pass"],
+                reverse=True,
+            )[:5]
+            hint = ", ".join(
+                f"{k}={v['pass']}/{v['pass'] + v['fail']} pass" for k, v in worst
+            )
+            msg += f". ChartInk checks (top bottlenecks, n={na}): {hint}"
+
+        sd = summary.get("scan_debug") or {}
+        if sd.get("skip_reason_counts"):
+            msg += f". Debug skips: {sd['skip_reason_counts']}"
+        if sd.get("chartink_full_analysis_count") == 0 and "chartink" in str(
+            get_config().get("vcp_scanner", {}).get("swing_scan_mode", "")
+        ):
+            msg += " (see server log: no stock reached full ChartInk checks)"
 
         return {
-            "message": f"Scan complete: {len(instruments)} stocks from top {top_n} sectors ({', '.join(top_sectors)})",
+            "message": msg,
             "summary": summary,
         }
     

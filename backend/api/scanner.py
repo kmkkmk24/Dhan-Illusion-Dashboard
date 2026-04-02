@@ -36,7 +36,43 @@ def list_signals(
         query = query.filter(Signal.section == section)
     if status:
         query = query.filter(Signal.status == status)
-    return query.order_by(Signal.current_score.desc()).all()
+    
+    signals = query.order_by(Signal.current_score.desc()).all()
+    
+    # Enhance signals with F&O information
+    enhanced_signals = []
+    for signal in signals:
+        # Get instrument info for F&O status
+        instrument = db.query(Instrument).filter(
+            Instrument.security_id == str(signal.security_id)
+        ).first()
+        
+        # Convert to dict and add F&O info
+        signal_dict = {
+            "id": signal.id,
+            "security_id": signal.security_id,
+            "symbol": signal.symbol,
+            "section": signal.section,
+            "signal_type": signal.signal_type,
+            "occurrence_number": signal.occurrence_number,
+            "first_detected_date": signal.first_detected_date,
+            "last_updated_date": signal.last_updated_date,
+            "current_score": signal.current_score,
+            "peak_score": signal.peak_score,
+            "trend_score": signal.trend_score,
+            "consol_score": signal.consol_score,
+            "breakout_score": signal.breakout_score,
+            "status": signal.status,
+            "invalidation_reason": signal.invalidation_reason,
+            "sector": signal.sector,
+            "close_price_at_detection": signal.close_price_at_detection,
+            # Add F&O information
+            "is_fno": instrument.is_fno if instrument else False,
+            "lot_size": instrument.lot_size if instrument else None,
+        }
+        enhanced_signals.append(signal_dict)
+    
+    return enhanced_signals
 
 
 @router.get("/{signal_id}", response_model=SignalDetailOut)

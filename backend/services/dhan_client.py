@@ -4,11 +4,14 @@ Dhan HQ API client for fetching historical candle data and instrument informatio
 API Reference: https://dhanhq.co/docs/v2/
 """
 
+import asyncio
 import logging
-from datetime import date, datetime
-from typing import Optional
-import pyotp
 import os
+import time
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+import pyotp
 
 import httpx
 import pandas as pd
@@ -18,6 +21,17 @@ from backend.config import get_dhan_credentials
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.dhan.co/v2"
+
+# Dhan /charts/historical rejects long spans (DH-905); stay under ~1 year per request.
+MAX_HISTORICAL_CHUNK_CALENDAR_DAYS = 330
+
+
+def _coerce_security_id_for_api(security_id: str) -> str | int:
+    """API expects numeric scrip ids as JSON numbers when possible."""
+    s = str(security_id).strip()
+    if s.isdigit():
+        return int(s)
+    return s
 
 EXCHANGE_SEGMENTS = {
     "NSE_EQ": "NSE_EQ",
@@ -30,13 +44,31 @@ INSTRUMENT_SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master-
 
 
 class DhanClient:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        hist_min_interval: Optional[float] = None,
+        hist_chunk_pause: Optional[float] = None,
+    ):
         creds = get_dhan_credentials()
         self.client_id = creds["client_id"]
         self.api_key = creds["api_key"]
         self.api_secret = creds["api_secret"]
         self.access_token = creds.get("access_token")  # Can be None initially
         self._http_client: Optional[httpx.AsyncClient] = None
+        # Space out /charts/historical calls (DH-904 if too fast; chunking = multiple calls/symbol)
+        self._hist_min_interval = (
+            float(hist_min_interval)
+            if hist_min_interval is not None
+            else float(os.environ.get("DHAN_HIST_MIN_INTERVAL_SEC", "0.45"))
+        )
+        self._hist_chunk_pause = (
+            float(hist_chunk_pause)
+            if hist_chunk_pause is not None
+            else float(os.environ.get("DHAN_HIST_CHUNK_PAUSE_SEC", "0.35"))
+        )
+        self._last_hist_monotonic = 0.0
+        self._hist_lock = asyncio.Lock()
 
     @property
     def headers(self) -> dict:
@@ -60,6 +92,115 @@ class DhanClient:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
+    async def _throttle_historical_request(self) -> None:
+        async with self._hist_lock:
+            now = time.monotonic()
+            gap = now - self._last_hist_monotonic
+            wait = self._hist_min_interval - gap
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_hist_monotonic = time.monotonic()
+
+    async def _fetch_historical_daily_chunk(
+        self,
+        client: httpx.AsyncClient,
+        security_id: str,
+        exchange_segment: str,
+        instrument: str,
+        from_date: date,
+        to_date: date,
+        expiry_code: int = 0,
+    ) -> Optional[pd.DataFrame]:
+        """Single POST /charts/historical (must stay within API max date span)."""
+        payload = {
+            "securityId": _coerce_security_id_for_api(security_id),
+            "exchangeSegment": exchange_segment,
+            "instrument": instrument,
+            "fromDate": from_date.strftime("%Y-%m-%d"),
+            "toDate": to_date.strftime("%Y-%m-%d"),
+            "expiryCode": expiry_code,
+        }
+        max_attempts = 6
+        backoff = 1.0
+
+        for attempt in range(max_attempts):
+            await self._throttle_historical_request()
+            try:
+                response = await client.post("/charts/historical", json=payload)
+            except Exception as e:
+                logger.warning("Historical POST failed id=%s: %s", security_id, e)
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 20)
+                continue
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                except Exception as e:
+                    logger.warning("Historical JSON id=%s: %s", security_id, e)
+                    return None
+                if not data or "open" not in data or not data.get("open"):
+                    return None
+                df = pd.DataFrame(
+                    {
+                        "timestamp": [
+                            datetime.fromtimestamp(ts) for ts in data["timestamp"]
+                        ],
+                        "open": data["open"],
+                        "high": data["high"],
+                        "low": data["low"],
+                        "close": data["close"],
+                        "volume": data["volume"],
+                    }
+                )
+                return df.sort_values("timestamp").reset_index(drop=True)
+
+            txt = response.text or ""
+
+            if response.status_code == 429 and attempt < max_attempts - 1:
+                ra = response.headers.get("Retry-After")
+                try:
+                    sleep_s = float(ra) if ra else backoff
+                except (TypeError, ValueError):
+                    sleep_s = backoff
+                sleep_s = max(sleep_s, 0.5)
+                logger.debug(
+                    "Dhan DH-904 rate limit id=%s, sleep %.1fs (attempt %s/%s)",
+                    security_id,
+                    sleep_s,
+                    attempt + 1,
+                    max_attempts,
+                )
+                await asyncio.sleep(sleep_s)
+                backoff = min(backoff * 2, 30)
+                continue
+
+            if response.status_code == 400 and "DH-905" in txt:
+                logger.debug(
+                    "Dhan historical DH-905 id=%s %s→%s (%s)",
+                    security_id,
+                    payload["fromDate"],
+                    payload["toDate"],
+                    exchange_segment,
+                )
+            elif response.status_code == 429:
+                logger.warning(
+                    "Dhan DH-904 rate limit exhausted id=%s after %s attempts",
+                    security_id,
+                    max_attempts,
+                )
+            else:
+                logger.warning(
+                    "HTTP %s historical id=%s: %s",
+                    response.status_code,
+                    security_id,
+                    txt[:300],
+                )
+            return None
+
+        return None
+
     async def get_historical_daily_data(
         self,
         security_id: str,
@@ -72,44 +213,93 @@ class DhanClient:
         """
         Fetch daily OHLCV candle data for a security.
 
+        Long ranges are loaded in chunks (Dhan returns DH-905 if from→to is too wide).
+
         Returns a DataFrame with columns: timestamp, open, high, low, close, volume
         """
+        if to_date < from_date:
+            return None
+
+        span_days = (to_date - from_date).days + 1
         client = await self._get_client()
-        payload = {
-            "securityId": security_id,
-            "exchangeSegment": exchange_segment,
-            "instrument": instrument,
-            "fromDate": from_date.strftime("%Y-%m-%d"),
-            "toDate": to_date.strftime("%Y-%m-%d"),
-            "expiryCode": expiry_code,
-        }
 
-        try:
-            response = await client.post("/charts/historical", json=payload)
-            response.raise_for_status()
-            data = response.json()
+        # Short span: one request
+        if span_days <= MAX_HISTORICAL_CHUNK_CALENDAR_DAYS:
+            return await self._fetch_historical_daily_chunk(
+                client,
+                security_id,
+                exchange_segment,
+                instrument,
+                from_date,
+                to_date,
+                expiry_code,
+            )
 
-            if not data or "open" not in data:
-                logger.warning(f"No data returned for {security_id}")
-                return None
+        # Walk backwards from to_date in chunks and merge
+        chunks: list[pd.DataFrame] = []
+        end = to_date
+        max_iterations = 24
+        iteration = 0
 
-            df = pd.DataFrame({
-                "timestamp": [datetime.fromtimestamp(ts) for ts in data["timestamp"]],
-                "open": data["open"],
-                "high": data["high"],
-                "low": data["low"],
-                "close": data["close"],
-                "volume": data["volume"],
-            })
-            df = df.sort_values("timestamp").reset_index(drop=True)
-            return df
+        while end >= from_date and iteration < max_iterations:
+            iteration += 1
+            start = max(
+                from_date,
+                end - timedelta(days=MAX_HISTORICAL_CHUNK_CALENDAR_DAYS - 1),
+            )
+            part = await self._fetch_historical_daily_chunk(
+                client,
+                security_id,
+                exchange_segment,
+                instrument,
+                start,
+                end,
+                expiry_code,
+            )
+            if part is None or part.empty:
+                # Retry a smaller window for this segment (delisted / thin history)
+                if (end - start).days > 90:
+                    await asyncio.sleep(self._hist_chunk_pause)
+                    mid_start = max(from_date, end - timedelta(days=120))
+                    part = await self._fetch_historical_daily_chunk(
+                        client,
+                        security_id,
+                        exchange_segment,
+                        instrument,
+                        mid_start,
+                        end,
+                        expiry_code,
+                    )
+                if part is None or part.empty:
+                    break
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching data for {security_id}: {e.response.status_code} - {e.response.text}")
+            chunks.append(part)
+            end = start - timedelta(days=1)
+            # Extra pause between chunks for same symbol (reduces DH-904 burst)
+            if end >= from_date:
+                await asyncio.sleep(self._hist_chunk_pause)
+
+        if not chunks:
+            # One more try: single sub-year window (avoids empty merge when first chunk errors)
+            fb_start = max(from_date, to_date - timedelta(days=min(299, span_days)))
+            if fb_start < to_date:
+                fb = await self._fetch_historical_daily_chunk(
+                    client,
+                    security_id,
+                    exchange_segment,
+                    instrument,
+                    fb_start,
+                    to_date,
+                    expiry_code,
+                )
+                if fb is not None and not fb.empty:
+                    return fb
             return None
-        except Exception as e:
-            logger.error(f"Error fetching data for {security_id}: {e}")
-            return None
+
+        out = pd.concat(chunks, ignore_index=True)
+        out = out.drop_duplicates(subset=["timestamp"], keep="last")
+        out = out.sort_values("timestamp").reset_index(drop=True)
+        return out
 
     async def get_intraday_data(
         self,
@@ -237,16 +427,44 @@ class DhanClient:
         if not int_ids:
             return None
         instruments = {exchange_segment: int_ids}
-        try:
-            response = await client.post(
-                "/marketfeed/ltp",
-                json=instruments,
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error fetching LTP: {e}")
-            return None
+        max_attempts = 6
+        backoff = 1.5
+        last_err: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                response = await client.post(
+                    "/marketfeed/ltp",
+                    json=instruments,
+                )
+                if response.status_code == 429 and attempt < max_attempts - 1:
+                    ra = response.headers.get("Retry-After")
+                    try:
+                        sleep_s = float(ra) if ra else backoff
+                    except (TypeError, ValueError):
+                        sleep_s = backoff
+                    sleep_s = max(sleep_s, 0.5)
+                    logger.debug(
+                        "Dhan LTP 429, sleep %.1fs (attempt %s/%s)",
+                        sleep_s,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(sleep_s)
+                    backoff = min(backoff * 2, 30)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30)
+                    continue
+                logger.error(f"Error fetching LTP: {e}")
+                return None
+        if last_err:
+            logger.error(f"Error fetching LTP: {last_err}")
+        return None
 
 
     # ── Order Management APIs ──

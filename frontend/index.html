@@ -119,14 +119,49 @@
 
         <!-- Swing Trades Tab -->
         <section id="content-swing" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-                <h2 class="text-lg font-bold" style="color:var(--text-heading)">Swing Trade Signals</h2>
-                <div class="filter-pills" id="swing-status-filter">
-                    <button class="filter-pill" data-value="" onclick="togglePill(this,'swing')">All</button>
-                    <button class="filter-pill active" data-value="active" onclick="togglePill(this,'swing')">Active</button>
-                    <button class="filter-pill" data-value="exploded" onclick="togglePill(this,'swing')">Exploded</button>
-                    <button class="filter-pill" data-value="invalidated" onclick="togglePill(this,'swing')">Invalidated</button>
-                    <button class="filter-pill" data-value="dismissed" onclick="togglePill(this,'swing')">Dismissed</button>
+            <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-xs font-bold" style="color:var(--text-heading)">Enhanced VCP Scanner</h2>
+                    <span class="text-2xs" style="color:var(--text-muted)">Progressive Contractions • Sector-First • Volume Analysis</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="filter-pills" id="swing-status-filter">
+                        <button class="filter-pill" data-value="" onclick="togglePill(this,'swing')">All</button>
+                        <button class="filter-pill active" data-value="active" onclick="togglePill(this,'swing')">Active</button>
+                        <button class="filter-pill" data-value="exploded" onclick="togglePill(this,'swing')">Exploded</button>
+                        <button class="filter-pill" data-value="invalidated" onclick="togglePill(this,'swing')">Invalid</button>
+                        <button class="filter-pill" data-value="dismissed" onclick="togglePill(this,'swing')">Dismissed</button>
+                    </div>
+                    <div class="filter-pills" id="swing-score-filter">
+                        <button class="filter-pill active" data-value="" onclick="togglePill(this,'swing')">Any</button>
+                        <button class="filter-pill" data-value="60" onclick="togglePill(this,'swing')">&gt;60%</button>
+                        <button class="filter-pill" data-value="70" onclick="togglePill(this,'swing')">&gt;70%</button>
+                        <button class="filter-pill" data-value="80" onclick="togglePill(this,'swing')">&gt;80%</button>
+                    </div>
+                    <button onclick="runSwingScan()" id="btn-swing-scan" class="btn-primary px-3 py-1 rounded-lg text-2xs" title="Run new VCP scan to find patterns">
+                        🔍 Scan VCP
+                    </button>
+                    <div class="h-4 w-px" style="background:rgba(255,255,255,0.1)"></div>
+                    <button onclick="refreshSwingSignals()" id="btn-refresh-swing" class="btn-secondary px-3 py-1 rounded-lg text-2xs" title="Refresh signals and prices">
+                        ↻ Refresh
+                    </button>
+                </div>
+            </div>
+
+            <!-- VCP Pattern Info Panel -->
+            <div id="vcp-info-panel" class="hidden mb-3 p-3 rounded-lg flex-shrink-0" style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.2)">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-medium" style="color:#22c55e">VCP Criteria:</span>
+                            <span class="text-2xs" style="color:var(--text-muted)">Progressive contractions (15%→10%→5%) • Volume dry-up • Near 52-week highs • Strong sectors</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span id="swing-scan-status" class="text-2xs" style="color:var(--text-muted)"></span>
+                        <span id="swing-last-updated" class="text-2xs" style="color:var(--text-muted)"></span>
+                        <button onclick="toggleVcpInfo()" class="text-2xs px-2 py-1 rounded" style="background:rgba(34,197,94,0.2);color:#22c55e">Hide Info</button>
+                    </div>
                 </div>
             </div>
             <div id="swing-signals-table" class="glass-card overflow-auto flex-1">

@@ -127,10 +127,9 @@ The application uses **automatic token management**:
 - **Directional Bias**: Separate CE/PE sector selection
 
 ### Swing Scanner
-- **Consolidation Detection**: Bollinger Band squeeze + ATR compression
-- **Explosion Confirmation**: Volume spike validation
-- **Multi-factor Scoring**: Weighted signal strength
-- **Sector-first Approach**: Focus on strongest sectors
+- **ChartInk-style VCP** (config `swing_scan_mode: chartink`): weekly inside bar, tight week, weekly SMA stack, 85%×250d high, volume.
+- **Prefiltered universe**: each **Swing Scan** run rebuilds `data/swing_universe_latest.csv` (filters 1–4) from Dhan when `swing_universe.auto_rebuild_before_scan: true` in `config.yaml`, then runs VCP on that list. You can still run `PYTHONPATH=. python3 scripts/swing_universe_bench.py` manually. If rebuild is off or fails and `latest.csv` is missing, swing scan falls back to the full ES universe + smart filter.
+- **Consolidation / Minervini mode**: `swing_scan_mode: minervini` uses Stage 2 + contraction gates.
 
 ## 🛠️ Development
 

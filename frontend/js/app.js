@@ -141,7 +141,7 @@ function switchTab(tab) {
     document.getElementById(`tab-${tab}`).classList.add('active');
 
     if (tab === 'sectors') loadSectorsTab();
-    if (tab === 'swing') loadSignals('swing');
+    if (tab === 'swing') { loadSignals('swing'); showVcpInfo(); }
     if (tab === 'fno') { loadFnoSignals(); loadSchedulerStatus(); }
     if (tab === 'journal') loadTrades();
     if (tab === 'settings') { loadBackups(); loadSectorDisplay(); }
@@ -261,7 +261,11 @@ function showFnoScoreTooltip(event, s) {
     const trend = Math.round((s.trend_score || 0) * 100);
     const consol = Math.round((s.consol_score || 0) * 100);
     const breakout = Math.round((s.breakout_score || 0) * 100);
-    const direction = s.signal_type === 'CE' ? 'Bullish (CE)' : s.signal_type === 'PE' ? 'Bearish (PE)' : s.signal_type;
+    const direction = s.signal_type === 'CE' ? 'Bullish (CE)' : 
+                      s.signal_type === 'PE' ? 'Bearish (PE)' : 
+                      s.signal_type === 'VCP' ? 'VCP Pattern' :
+                      s.signal_type === 'Hybrid-VCP' ? 'Hybrid VCP' :
+                      s.signal_type;
     const barColor = v => v >= 70 ? '#22c55e' : v >= 45 ? '#eab308' : '#ef4444';
 
     const bar = (label, val, weight) => `
@@ -284,19 +288,27 @@ function showFnoScoreTooltip(event, s) {
             ${s.symbol} — ${combined}% <span style="font-weight:400;font-size:0.5rem;color:var(--text-muted)">${direction}</span>
         </div>
         <div style="font-size:0.5rem;color:var(--text-muted);margin-bottom:8px">
-            Formula: 35% Trend + 35% Consolidation + 30% Breakout Proximity
+            ${s.signal_type?.includes('VCP') ? 
+                'Formula: Trend + Contraction + Volume + Position' : 
+                'Formula: 35% Trend + 35% Consolidation + 30% Breakout Proximity'}
         </div>
-        ${bar('Trend Strength', trend, 35)}
+        ${bar(s.signal_type?.includes('VCP') ? 'Trend Alignment' : 'Trend Strength', trend, 35)}
         <div style="font-size:0.45rem;color:var(--text-muted);margin-top:-4px;margin-bottom:6px">
-            EMA alignment, higher highs/lows, slope
+            ${s.signal_type?.includes('VCP') ? 
+                'Moving average alignment, price above key levels' : 
+                'EMA alignment, higher highs/lows, slope'}
         </div>
-        ${bar('Consolidation Quality', consol, 35)}
+        ${bar(s.signal_type?.includes('VCP') ? 'Contraction Quality' : 'Consolidation Quality', consol, 35)}
         <div style="font-size:0.45rem;color:var(--text-muted);margin-top:-4px;margin-bottom:6px">
-            Tight range at ${s.signal_type === 'CE' ? 'highs' : 'lows'}, volume dry-up
+            ${s.signal_type?.includes('VCP') ? 
+                'Progressive tightening pattern, volume behavior' : 
+                `Tight range at ${s.signal_type === 'CE' ? 'highs' : 'lows'}, volume dry-up`}
         </div>
-        ${bar('Breakout Proximity', breakout, 30)}
+        ${bar(s.signal_type?.includes('VCP') ? 'Volume Pattern' : 'Breakout Proximity', breakout, 30)}
         <div style="font-size:0.45rem;color:var(--text-muted);margin-top:-4px;margin-bottom:4px">
-            Distance to consolidation ${s.signal_type === 'CE' ? 'ceiling' : 'floor'}
+            ${s.signal_type?.includes('VCP') ? 
+                'Volume dry-up during contraction, breakout surge potential' : 
+                `Distance to consolidation ${s.signal_type === 'CE' ? 'ceiling' : 'floor'}`}
         </div>
         <div style="border-top:1px solid var(--glass-border);padding-top:4px;font-size:0.5rem;display:flex;justify-content:space-between">
             <span style="color:var(--text-muted)">Peak: ${Math.round((s.peak_score || 0) * 100)}%</span>
@@ -645,14 +657,27 @@ async function runSectorAnalysisFromTab() {
 
 async function loadSignals(section) {
     const statusFilters = getSelectedPills(`${section}-status-filter`);
+    const scoreFilters = getSelectedPills(`${section}-score-filter`);
     const containerId = `${section}-signals-table`;
 
     try {
         const response = await fetch(`${API_BASE}/api/signals/?section=${section}`);
         let signals = await response.json();
 
+        // Apply status filters
         if (statusFilters.length) {
             signals = signals.filter(s => statusFilters.includes(s.status));
+        }
+
+        // Apply score filters
+        if (scoreFilters.length) {
+            signals = signals.filter(s => {
+                const scorePercent = (s.current_score * 100);
+                return scoreFilters.some(threshold => {
+                    const minScore = parseInt(threshold);
+                    return scorePercent >= minScore;
+                });
+            });
         }
 
         if (!signals.length) {
@@ -673,8 +698,14 @@ async function loadSignals(section) {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({security_ids: secIds}),
             });
-            cmpMap = await cmpRes.json();
-        } catch (e) { }
+            if (cmpRes.ok) {
+                cmpMap = await cmpRes.json();
+            } else {
+                console.warn('CMP data unavailable (market closed or API issue)');
+            }
+        } catch (e) { 
+            console.warn('Failed to fetch CMP data:', e.message);
+        }
 
         const rows = signals.map(s => {
             const scoreClass = s.current_score >= 0.8 ? 'score-high' :
@@ -682,19 +713,40 @@ async function loadSignals(section) {
             const occBadge = s.occurrence_number > 1
                 ? `<span class="occurrence-${Math.min(s.occurrence_number, 3)} text-2xs px-1.5 py-0.5 rounded-full ml-1.5">${ordinal(s.occurrence_number)} time</span>`
                 : '';
+            
+            // F&O indicator badge with lot size tooltip
+            const fnoBadge = s.is_fno 
+                ? `<span class="text-2xs px-1.5 py-0.5 rounded-full ml-1" style="background:rgba(168,85,247,0.15);color:#a78bfa;border:1px solid rgba(168,85,247,0.3)" title="F&O Available - Lot Size: ${s.lot_size || 'N/A'}">F&O</span>`
+                : '';
+            
             const statusClass = `status-${s.status}`;
             const cmp = cmpMap[s.security_id];
-            const cmpDisplay = cmp ? cmp.toFixed(2) : '-';
+            const cmpDisplay = cmp ? cmp.toFixed(2) : (s.close_price_at_detection ? s.close_price_at_detection.toFixed(2) : '-');
             const pctChange = (cmp && s.close_price_at_detection)
                 ? ((cmp - s.close_price_at_detection) / s.close_price_at_detection * 100).toFixed(1)
                 : null;
             const pctClass = pctChange > 0 ? 'text-profit' : pctChange < 0 ? 'text-loss' : '';
             const pctDisplay = pctChange !== null ? `<span class="${pctClass}" style="font-size:0.5rem">${pctChange > 0 ? '+' : ''}${pctChange}%</span>` : '';
 
+            // Tooltip data for score breakdown
+            const tipData = JSON.stringify({
+                symbol: s.symbol, 
+                signal_type: s.signal_type || 'VCP', 
+                current_score: s.current_score,
+                peak_score: s.peak_score, 
+                trend_score: s.trend_score, 
+                consol_score: s.consol_score,
+                breakout_score: s.breakout_score, 
+                first_detected_date: s.first_detected_date,
+            }).replace(/"/g, '&quot;');
+
             return `<tr class="cursor-pointer" onclick="viewSignalDetail(${s.id})">
-                <td class="font-medium" style="color:var(--text-primary)">${s.symbol}${occBadge}</td>
+                <td class="font-medium" style="color:var(--text-primary)">${s.symbol}${occBadge}${fnoBadge}</td>
                 <td>${s.sector || '-'}</td>
-                <td><span class="${scoreClass} text-2xs px-1.5 py-0.5 rounded-full">${(s.current_score * 100).toFixed(0)}%</span></td>
+                <td><span class="${scoreClass} text-2xs px-1.5 py-0.5 rounded-full score-tooltip-trigger"
+                    onmouseenter="showFnoScoreTooltip(event, ${tipData})"
+                    onmouseleave="hideScoreTooltip()"
+                    >${(s.current_score * 100).toFixed(0)}%</span></td>
                 <td>${s.close_price_at_detection || '-'}</td>
                 <td>${cmpDisplay} ${pctDisplay}</td>
                 <td>${s.first_detected_date}</td>
@@ -715,6 +767,17 @@ async function loadSignals(section) {
                 <tbody>${rows}</tbody>
             </table>`;
         applySortable(containerId);
+        
+        // Update last refreshed time for swing trades
+        if (section === 'swing') {
+            const lastUpdatedEl = document.getElementById('swing-last-updated');
+            if (lastUpdatedEl) {
+                const now = new Date();
+                const totalSignals = signals.length;
+                const displayedSignals = rows.length;
+                lastUpdatedEl.textContent = `${displayedSignals} of ${totalSignals} signals • Updated: ${now.toLocaleTimeString()}`;
+            }
+        }
     } catch (err) {
         console.error('Error loading signals:', err);
     }
@@ -2232,12 +2295,26 @@ async function runScan(section) {
     try {
         const response = await fetch(`${API_BASE}/api/settings/scan/run?section=${section}`, { method: 'POST' });
         const data = await response.json();
-        const s = data.summary;
-        let msg = data.message;
+        
+        // Check if response indicates an error
+        if (data.error) {
+            throw new Error(data.message || 'Scan failed');
+        }
+        
+        const s = data.summary || {};
+        let msg = data.message || 'Scan completed';
+        
+        // Add summary details if available
         if (s.scanned) {
-            msg += ` | Scanned: ${s.scanned}, New signals: ${s.new_signals}, Updated: ${s.updated}, Exploded: ${s.exploded}, Invalidated: ${s.invalidated}`;
+            msg += ` | Scanned: ${s.scanned}`;
+            if (s.new_signals || s.vcp_signals) msg += `, New signals: ${s.new_signals || s.vcp_signals || 0}`;
+            if (s.updated) msg += `, Updated: ${s.updated}`;
+            if (s.exploded) msg += `, Exploded: ${s.exploded}`;
+            if (s.invalidated) msg += `, Invalidated: ${s.invalidated}`;
         }
         if (s.errors) msg += ` | Errors: ${s.errors}`;
+        if (s.rate_limited) msg += ` | Rate limited: ${s.rate_limited}`;
+        
         statusEl.textContent = msg;
         statusEl.style.color = '#22c55e';
 
@@ -2498,6 +2575,146 @@ function formatCurrency(amount) {
     return prefix + new Intl.NumberFormat('en-IN', {
         style: 'currency', currency: 'INR', maximumFractionDigits: 0
     }).format(amount);
+}
+
+// --- VCP Scanner Functions ---
+
+function showVcpInfo() {
+    const panel = document.getElementById('vcp-info-panel');
+    if (panel) {
+        panel.classList.remove('hidden');
+    }
+}
+
+function toggleVcpInfo() {
+    const panel = document.getElementById('vcp-info-panel');
+    if (panel) {
+        panel.classList.toggle('hidden');
+    }
+}
+
+function loadSwingSignalsWithVcpFilters() {
+    const statusFilters = getSelectedPills('swing-status-filter');
+    const scoreFilters = getSelectedPills('swing-score-filter');
+    
+    // Apply VCP-specific filtering
+    loadSignals('swing', { statusFilters, scoreFilters });
+}
+
+async function runSwingScan() {
+    const btn = document.getElementById('btn-swing-scan');
+    const statusEl = document.getElementById('swing-scan-status');
+    const originalText = btn.innerHTML;
+    
+    // Show loading state
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scanning...';
+    
+    if (statusEl) {
+        statusEl.textContent = 'Running VCP scan... This may take a few minutes.';
+        statusEl.style.color = '#6366f1';
+    }
+    
+    try {
+        // Run the swing scan
+        const response = await fetch(`${API_BASE}/api/settings/scan/run?section=swing`, { method: 'POST' });
+        const data = await response.json();
+        
+        // Check if response indicates an error
+        if (data.error) {
+            throw new Error(data.message || 'Scan failed');
+        }
+        
+        const s = data.summary || {};
+        
+        // Show success feedback with scan results
+        let resultMsg = '✓ Scan Complete';
+        let statusMsg = data.message || 'Scan completed successfully';
+        
+        if (s.scanned) {
+            resultMsg = `✓ Found ${s.vcp_signals || 0} VCP`;
+            statusMsg = `Scanned ${s.scanned} stocks, found ${s.vcp_signals || 0} VCP patterns`;
+            if (s.chartink_matches) statusMsg += ` (${s.chartink_matches} passed Chartink filters)`;
+        }
+        
+        btn.innerHTML = resultMsg;
+        
+        if (statusEl) {
+            statusEl.textContent = statusMsg;
+            statusEl.style.color = '#22c55e';
+        }
+        
+        // Reload the signals to show new results
+        await loadSignals('swing');
+        
+        // Reset button after delay
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            if (statusEl) {
+                statusEl.textContent = '';
+            }
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error running swing scan:', error);
+        btn.innerHTML = '✗ Scan Failed';
+        
+        if (statusEl) {
+            statusEl.textContent = `Scan failed: ${error.message}`;
+            statusEl.style.color = '#ef4444';
+        }
+        
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            if (statusEl) {
+                statusEl.textContent = '';
+            }
+        }, 5000);
+    }
+}
+
+async function refreshSwingSignals() {
+    const btn = document.getElementById('btn-refresh-swing');
+    const originalText = btn.innerHTML;
+    
+    // Show loading state
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Refreshing...';
+    
+    try {
+        // Reload signals with current filters
+        await loadSignals('swing');
+        
+        // Show success feedback briefly
+        btn.innerHTML = '✓ Refreshed';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 1000);
+        
+    } catch (error) {
+        console.error('Error refreshing signals:', error);
+        btn.innerHTML = '✗ Error';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
+    }
+}
+
+// Enhanced signal rendering for VCP patterns
+function renderVcpSignal(signal) {
+    const vcpBadge = signal.signal_type === 'VCP' 
+        ? `<span class="text-2xs px-1.5 py-0.5 rounded-full" style="background:rgba(34,197,94,0.12);color:#22c55e;margin-left:4px">VCP</span>`
+        : '';
+    
+    const contractionInfo = signal.contraction_score 
+        ? `<div class="text-2xs mt-1" style="color:var(--text-muted)">Contraction: ${(signal.contraction_score * 100).toFixed(0)}% • Volume: ${(signal.breakout_score * 100).toFixed(0)}%</div>`
+        : '';
+    
+    return { vcpBadge, contractionInfo };
 }
 
 // --- Initialize ---

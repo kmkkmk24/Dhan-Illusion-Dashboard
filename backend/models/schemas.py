@@ -67,6 +67,8 @@ class SignalOut(BaseModel):
     invalidation_reason: Optional[str] = None
     sector: Optional[str] = None
     close_price_at_detection: Optional[float] = None
+    is_fno: Optional[bool] = None
+    lot_size: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

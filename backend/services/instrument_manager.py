@@ -169,10 +169,24 @@ def get_fno_stocks(db: Session) -> list[Instrument]:
 
 
 def get_all_equity_stocks(db: Session) -> list[Instrument]:
-    """Return all NSE equity stocks."""
+    """Return all NSE segment-E rows (includes bonds, MF, ES, etc.)."""
     return db.query(Instrument).filter(
         Instrument.exchange == "NSE",
         Instrument.segment == "E",
+    ).all()
+
+
+def get_nse_cash_equity_shares(db: Session) -> list[Instrument]:
+    """
+    Ordinary NSE cash equities (instrument_type ES only).
+
+    Dhan /charts/historical with NSE_EQ + EQUITY fails with HTTP 400 for DEB/DBT/MF/etc.
+    Use this for swing/VCP scans.
+    """
+    return db.query(Instrument).filter(
+        Instrument.exchange == "NSE",
+        Instrument.segment == "E",
+        Instrument.instrument_type == "ES",
     ).all()
 
 
