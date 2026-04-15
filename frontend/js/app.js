@@ -142,7 +142,9 @@ function switchTab(tab) {
 
     if (tab === 'sectors') loadSectorsTab();
     if (tab === 'swing') { loadSignals('swing'); showVcpInfo(); }
-    if (tab === 'fno') { loadFnoSignals(); loadSchedulerStatus(); }
+    if (tab === 'fno') { loadFnoSignals(); loadSchedulerStatus(); switchFnoSubTab(fnoSubTab); }
+    if (tab === 'index') { loadIndexSignals(); }
+    if (tab === 'value') { loadValueInvesting(); }
     if (tab === 'journal') loadTrades();
     if (tab === 'settings') { loadBackups(); loadSectorDisplay(); }
 }
@@ -254,6 +256,18 @@ function _positionTooltip(tip, event) {
     tip.style.opacity = '1';
 }
 
+function getSignalDirection(signalType) {
+    if (!signalType) return '';
+    const t = String(signalType).toUpperCase();
+    if (t.startsWith('CE')) return 'CE';
+    if (t.startsWith('PE')) return 'PE';
+    return signalType;
+}
+
+function isAdvDeclSignal(signalType) {
+    return String(signalType || '').toUpperCase().includes('_AD');
+}
+
 function showFnoScoreTooltip(event, s) {
     hideScoreTooltip();
 
@@ -261,8 +275,9 @@ function showFnoScoreTooltip(event, s) {
     const trend = Math.round((s.trend_score || 0) * 100);
     const consol = Math.round((s.consol_score || 0) * 100);
     const breakout = Math.round((s.breakout_score || 0) * 100);
-    const direction = s.signal_type === 'CE' ? 'Bullish (CE)' : 
-                      s.signal_type === 'PE' ? 'Bearish (PE)' : 
+    const dir = getSignalDirection(s.signal_type);
+    const direction = dir === 'CE' ? 'Bullish (CE)' : 
+                      dir === 'PE' ? 'Bearish (PE)' : 
                       s.signal_type === 'VCP' ? 'VCP Pattern' :
                       s.signal_type === 'Hybrid-VCP' ? 'Hybrid VCP' :
                       s.signal_type;
@@ -279,7 +294,7 @@ function showFnoScoreTooltip(event, s) {
             </div>
         </div>`;
 
-    const hasSubs = s.trend_score != null;
+    const hasSubs = s.trend_score != null && !isAdvDeclSignal(s.signal_type);
 
     const tip = document.createElement('div');
     tip.className = 'score-tooltip';
@@ -302,17 +317,24 @@ function showFnoScoreTooltip(event, s) {
         <div style="font-size:0.45rem;color:var(--text-muted);margin-top:-4px;margin-bottom:6px">
             ${s.signal_type?.includes('VCP') ? 
                 'Progressive tightening pattern, volume behavior' : 
-                `Tight range at ${s.signal_type === 'CE' ? 'highs' : 'lows'}, volume dry-up`}
+                `Tight range at ${dir === 'CE' ? 'highs' : 'lows'}, volume dry-up`}
         </div>
         ${bar(s.signal_type?.includes('VCP') ? 'Volume Pattern' : 'Breakout Proximity', breakout, 30)}
         <div style="font-size:0.45rem;color:var(--text-muted);margin-top:-4px;margin-bottom:4px">
             ${s.signal_type?.includes('VCP') ? 
                 'Volume dry-up during contraction, breakout surge potential' : 
-                `Distance to consolidation ${s.signal_type === 'CE' ? 'ceiling' : 'floor'}`}
+                `Distance to consolidation ${dir === 'CE' ? 'ceiling' : 'floor'}`}
         </div>
         <div style="border-top:1px solid var(--glass-border);padding-top:4px;font-size:0.5rem;display:flex;justify-content:space-between">
             <span style="color:var(--text-muted)">Peak: ${Math.round((s.peak_score || 0) * 100)}%</span>
             <span style="color:var(--text-muted)">Detected: ${s.first_detected_date}</span>
+        </div>
+    ` : isAdvDeclSignal(s.signal_type) ? `
+        <div style="font-weight:700;font-size:0.65rem;margin-bottom:4px;color:var(--text-heading)">
+            ${s.symbol} — ${combined}% <span style="font-weight:400;font-size:0.5rem;color:var(--text-muted)">${direction}</span>
+        </div>
+        <div style="font-size:0.5rem;color:var(--text-muted)">
+            Adv/Decl momentum setup: breadth + EMA/RSI/ADX/volume + OI boosts.
         </div>
     ` : `
         <div style="font-weight:700;font-size:0.65rem;margin-bottom:4px;color:var(--text-heading)">
@@ -1647,6 +1669,7 @@ async function _cancelTrade(tradeId, signalId) {
 // --- F&O Directional Scanner ---
 
 let fnoScanMode = 'auto'; // 'auto' or 'custom'
+let fnoSubTab = 'core';
 
 function toggleFnoScanMode() {
     const btn = document.getElementById('btn-fno-mode');
@@ -1666,6 +1689,528 @@ function toggleFnoScanMode() {
         btn.classList.add('btn-secondary');
         panel.classList.add('hidden');
     }
+}
+
+function switchFnoSubTab(mode, btn) {
+    fnoSubTab = mode;
+    const corePanel = document.getElementById('fno-core-panel');
+    const adPanel = document.getElementById('fno-advdecl-panel');
+    if (corePanel) corePanel.classList.toggle('hidden', mode !== 'core');
+    if (adPanel) adPanel.classList.toggle('hidden', mode !== 'advdecl');
+
+    const pills = document.querySelectorAll('#fno-subtab .filter-pill');
+    pills.forEach(p => p.classList.toggle('active', p.dataset.value === mode));
+}
+
+// --- Index Trading ---
+
+let _indexMode = 'intraday';
+
+async function loadIndexSignals(mode = _indexMode) {
+    _indexMode = mode;
+    const status = document.getElementById('index-scan-status');
+    if (status) status.textContent = 'Loading index signals...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/signals?mode=${mode}`);
+        const data = await resp.json();
+        renderIndexSignals(data, mode);
+
+        if (status) {
+            const ts = data.as_of ? new Date(data.as_of).toLocaleTimeString() : '';
+            const count = (data.signals || []).length;
+            const skipText = data.summary?.skip_reason_counts && Object.keys(data.summary.skip_reason_counts).length
+                ? ` · Skips: ${JSON.stringify(data.summary.skip_reason_counts)}`
+                : '';
+            status.textContent = count
+                ? `Last scan: ${ts || 'n/a'} · ${mode === 'positional' ? 'Positional' : 'Intraday'} signals: ${count}${skipText}`
+                : (data.summary?.error ? `Index scan error: ${data.summary.error}` : `No ${mode} index signals yet${skipText}`);
+        }
+    } catch (e) {
+        if (status) status.textContent = `Index load failed: ${e.message}`;
+    }
+}
+
+async function runIndexScan(mode = _indexMode) {
+    _indexMode = mode;
+    const btn = document.getElementById('btn-index-scan');
+    const btnPos = document.getElementById('btn-index-scan-positional');
+    const status = document.getElementById('index-scan-status');
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; btn.style.opacity = '0.7'; }
+    if (btnPos) { btnPos.disabled = true; btnPos.textContent = 'Scanning...'; btnPos.style.opacity = '0.7'; }
+    if (status) status.textContent = `Running ${mode} index scan...`;
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/scan/run?mode=${mode}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Scan failed');
+        renderIndexSignals(data, mode);
+        if (status) {
+            const skips = data.summary?.skip_reason_counts;
+            const skipText = skips && Object.keys(skips).length
+                ? ` · Skips: ${JSON.stringify(skips)}`
+                : '';
+            status.textContent = `Scan complete · ${mode} signals: ${(data.signals || []).length}${skipText}`;
+        }
+    } catch (e) {
+        if (status) status.textContent = `Index scan failed: ${e.message}`;
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Scan Intraday'; btn.style.opacity = '1'; }
+        if (btnPos) { btnPos.disabled = false; btnPos.textContent = 'Scan Positional'; btnPos.style.opacity = '1'; }
+    }
+}
+
+function renderIndexSignals(data, mode = _indexMode) {
+    const ceTable = document.getElementById('index-ce-table');
+    const peTable = document.getElementById('index-pe-table');
+    if (!ceTable || !peTable) return;
+
+    const signals = data.signals || [];
+    const fmt = n => new Intl.NumberFormat('en-IN').format(n);
+
+    const formatExpiry = exp => {
+        if (!exp) return '-';
+        const today = new Date();
+        const d = new Date(exp);
+        const diff = Math.ceil((d - today) / (1000 * 60 * 60 * 24));
+        return `${exp.slice(5)} (${diff >= 0 ? diff : 0}d)`;
+    };
+
+    const renderTable = (rows, side) => {
+        if (!rows.length) {
+            return `<div class="p-6 text-center text-2xs" style="color:var(--text-muted)">No ${side} setups right now</div>`;
+        }
+        const body = rows.map(r => {
+            const click = r.signal_id ? `onclick="viewSignalDetail(${r.signal_id})"` : '';
+            const horizon = r.horizon ? r.horizon : ((r.setup_type || '').startsWith('positional') ? 'Positional' : 'Intraday');
+            const setupLabelRaw = r.setup_type === 'mean_revert' ? 'Mean Revert' : r.setup_type === 'positional_breakout' ? 'Breakout' : r.setup_type === 'positional_trend' ? 'Trend' : 'Trend';
+            const setupLabel = `${horizon} · ${setupLabelRaw}`;
+            const target = r.premium_target ? `₹${r.premium_target}` : '-';
+            const sl = r.premium_sl ? `₹${r.premium_sl}` : '-';
+            return `
+                <tr class="cursor-pointer" ${click}>
+                    <td>${r.index || '-'}</td>
+                    <td>${setupLabel}</td>
+                    <td>${Math.round((r.score || 0) * 100)}%</td>
+                    <td>${r.spot ? fmt(r.spot) : '-'}</td>
+                    <td>${r.strike || '-'} ${r.direction || ''}</td>
+                    <td>${r.premium ? '₹' + r.premium : '-'}</td>
+                    <td>${target} / ${sl}</td>
+                    <td>${formatExpiry(r.expiry)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <table class="data-table" style="font-size:0.6rem">
+                <thead>
+                    <tr>
+                        <th>Index</th>
+                        <th>Setup</th>
+                        <th>Score</th>
+                        <th>Spot</th>
+                        <th>Strike</th>
+                        <th>Premium</th>
+                        <th>T / SL</th>
+                        <th>Expiry</th>
+                    </tr>
+                </thead>
+                <tbody>${body}</tbody>
+            </table>
+        `;
+    };
+
+    const ce = signals.filter(s => s.direction === 'CE');
+    const pe = signals.filter(s => s.direction === 'PE');
+    ceTable.innerHTML = renderTable(ce, 'CE');
+    peTable.innerHTML = renderTable(pe, 'PE');
+    applySortable('index-ce-table');
+    applySortable('index-pe-table');
+}
+
+// --- Value Investing ---
+
+async function refreshValueInvesting() {
+    const btn = document.getElementById('btn-value-refresh');
+    const status = document.getElementById('value-scan-status');
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; btn.style.opacity = '0.7'; }
+    if (status) { status.textContent = 'Fetching Tapetide fundamentals...'; status.style.color = '#6366f1'; }
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/value-investing/refresh`, { method: 'POST' });
+        const text = await resp.text();
+        let data = {};
+        try { data = JSON.parse(text); } catch (_) { }
+        if (!resp.ok || data?.ok === false) throw new Error(data?.message || text || 'Refresh failed');
+        if (status) {
+            status.textContent = `Updated ${data.stored || 0} candidates (scanned ${data.scanned || 0})`;
+            status.style.color = '#22c55e';
+        }
+        loadValueInvesting();
+    } catch (e) {
+        if (status) {
+            status.textContent = `Refresh failed: ${e.message}`;
+            status.style.color = '#ef4444';
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Refresh Fundamentals'; btn.style.opacity = '1'; }
+    }
+}
+
+let _valueRows = [];
+let _valueSortKey = 'score';
+let _valueSortDir = 'desc';
+
+async function loadValueInvesting() {
+    const table = document.getElementById('value-table');
+    const status = document.getElementById('value-scan-status');
+    if (status && !status.textContent) status.textContent = 'Loading value candidates...';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/value-investing/stocks`);
+        const rows = await resp.json();
+        _valueRows = Array.isArray(rows) ? rows : [];
+        renderValueTable(_valueRows, table);
+        if (status && rows.length) {
+            status.textContent = `Loaded ${rows.length} candidates`;
+            status.style.color = '#22c55e';
+        }
+    } catch (e) {
+        if (table) table.innerHTML = `<div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Failed to load value candidates</div>`;
+        if (status) {
+            status.textContent = `Load failed: ${e.message}`;
+            status.style.color = '#ef4444';
+        }
+    }
+}
+
+function renderValueTable(rows, table) {
+    if (!table) return;
+    if (!rows || !rows.length) {
+        table.innerHTML = `<div class="p-6 text-center text-2xs" style="color:var(--text-muted)">No value candidates yet</div>`;
+        return;
+    }
+
+    const fmt = n => n == null ? '-' : new Intl.NumberFormat('en-IN').format(Math.round(n));
+    const pct = n => n != null && n !== 0 ? `${n.toFixed(1)}%` : '-';
+    const num = n => n != null && n !== 0 ? n.toFixed(1) : '-';
+    const sortIcon = key => _valueSortKey === key ? (_valueSortDir === 'asc' ? ' ↑' : ' ↓') : '';
+
+    const sortedRows = [...rows].sort((a, b) => compareValueRows(a, b, _valueSortKey, _valueSortDir));
+
+    const body = sortedRows.map(r => {
+        const fv = r.fair_value || {};
+        const range = fv.fair_value_low && fv.fair_value_high
+            ? `₹${fv.fair_value_low} - ₹${fv.fair_value_high}`
+            : '-';
+        const upside = fv.upside_pct != null ? `${fv.upside_pct.toFixed(1)}%` : '-';
+        const badge = fv.undervalued ? '<span class="text-2xs px-1 py-0.5 rounded" style="background:rgba(34,197,94,0.12);color:#22c55e">Undervalued</span>' : '';
+        const dcf = r.mini_dcf || {};
+        const dcfRange = dcf.dcf_low && dcf.dcf_high ? `₹${dcf.dcf_low} - ₹${dcf.dcf_high}` : '-';
+        const dcfUpside = dcf.upside_pct != null ? `${dcf.upside_pct.toFixed(1)}%` : '-';
+        const dcfBadge = dcf.undervalued ? '<span class="text-2xs px-1 py-0.5 rounded" style="background:rgba(59,130,246,0.12);color:#60a5fa">Undervalued</span>' : '';
+        const ltp = r.ltp != null ? `₹${Number(r.ltp).toFixed(2)}` : '-';
+        const ltpSrc = r.ltp_source ? ` <span class="text-2xs" style="color:var(--text-muted)">(${r.ltp_source})</span>` : '';
+        return `
+        <tr class="cursor-pointer" onclick="openValueDetail(${r.id})">
+            <td class="font-medium">${r.symbol || '-'}</td>
+            <td>${r.display_name || '-'}</td>
+            <td>${r.sector || '-'}</td>
+            <td>${r.score != null ? Math.round(r.score * 100) + '%' : '-'}</td>
+            <td>${fmt(r.market_cap)}</td>
+            <td>${ltp}${ltpSrc}</td>
+            <td>${num(r.pe)}</td>
+            <td>${num(r.roce)}</td>
+            <td>${num(r.roe)}</td>
+            <td>${num(r.debt_to_eq)}</td>
+            <td>${pct(r.promoter_holding)}</td>
+            <td>${range} ${badge}</td>
+            <td>${upside}</td>
+            <td>${dcfRange} ${dcfBadge}</td>
+            <td>${dcfUpside}</td>
+        </tr>
+    `}).join('');
+
+    table.innerHTML = `
+        <table class="data-table" style="font-size:0.6rem">
+            <thead>
+                <tr>
+                    <th onclick="sortValueTable('symbol')">Symbol${sortIcon('symbol')}</th>
+                    <th onclick="sortValueTable('name')">Name${sortIcon('name')}</th>
+                    <th onclick="sortValueTable('sector')">Sector${sortIcon('sector')}</th>
+                    <th onclick="sortValueTable('score')">Score${sortIcon('score')}</th>
+                    <th onclick="sortValueTable('market_cap')">Mcap (Cr)${sortIcon('market_cap')}</th>
+                    <th onclick="sortValueTable('ltp')">LTP${sortIcon('ltp')}</th>
+                    <th onclick="sortValueTable('pe')">PE${sortIcon('pe')}</th>
+                    <th onclick="sortValueTable('roce')">ROCE${sortIcon('roce')}</th>
+                    <th onclick="sortValueTable('roe')">ROE${sortIcon('roe')}</th>
+                    <th onclick="sortValueTable('debt_to_eq')">Debt/Eq${sortIcon('debt_to_eq')}</th>
+                    <th onclick="sortValueTable('promoter_holding')">Promoter${sortIcon('promoter_holding')}</th>
+                    <th onclick="sortValueTable('fair_value')">Fair Value${sortIcon('fair_value')}</th>
+                    <th onclick="sortValueTable('upside')">Upside${sortIcon('upside')}</th>
+                    <th onclick="sortValueTable('dcf')">Mini DCF${sortIcon('dcf')}</th>
+                    <th onclick="sortValueTable('dcf_upside')">DCF Upside${sortIcon('dcf_upside')}</th>
+                </tr>
+            </thead>
+            <tbody>${body}</tbody>
+        </table>
+    `;
+}
+
+function sortValueTable(key) {
+    if (_valueSortKey === key) {
+        _valueSortDir = _valueSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _valueSortKey = key;
+        _valueSortDir = ['symbol', 'name', 'sector'].includes(key) ? 'asc' : 'desc';
+    }
+    const table = document.getElementById('value-table');
+    renderValueTable(_valueRows, table);
+}
+
+function compareValueRows(a, b, key, dir) {
+    const numVal = v => {
+        if (v == null || Number.isNaN(v)) {
+            return dir === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+        }
+        return Number(v);
+    };
+    const strVal = v => (v || '').toString().toLowerCase();
+
+    let va;
+    let vb;
+
+    switch (key) {
+        case 'symbol':
+            va = strVal(a.symbol);
+            vb = strVal(b.symbol);
+            return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        case 'name':
+            va = strVal(a.display_name);
+            vb = strVal(b.display_name);
+            return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        case 'sector':
+            va = strVal(a.sector);
+            vb = strVal(b.sector);
+            return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        case 'fair_value': {
+            const ua = a.fair_value?.undervalued ? 1 : 0;
+            const ub = b.fair_value?.undervalued ? 1 : 0;
+            if (ua !== ub) {
+                return dir === 'asc' ? ua - ub : ub - ua;
+            }
+            va = numVal(a.fair_value?.fair_value_low);
+            vb = numVal(b.fair_value?.fair_value_low);
+            break;
+        }
+        case 'upside':
+            va = numVal(a.fair_value?.upside_pct);
+            vb = numVal(b.fair_value?.upside_pct);
+            break;
+        case 'dcf':
+            va = numVal(a.mini_dcf?.dcf_low);
+            vb = numVal(b.mini_dcf?.dcf_low);
+            break;
+        case 'dcf_upside':
+            va = numVal(a.mini_dcf?.upside_pct);
+            vb = numVal(b.mini_dcf?.upside_pct);
+            break;
+        default:
+            va = numVal(a[key]);
+            vb = numVal(b[key]);
+    }
+
+    return dir === 'asc' ? va - vb : vb - va;
+}
+
+async function openValueDetail(candidateId) {
+    const panel = document.getElementById('value-detail-panel');
+    const content = document.getElementById('value-detail-content');
+    const loading = document.getElementById('value-detail-loading');
+    const errorBox = document.getElementById('value-detail-error');
+    const errorMsg = document.getElementById('value-detail-error-msg');
+
+    if (panel) panel.classList.remove('hidden');
+    if (content) content.classList.add('hidden');
+    if (errorBox) errorBox.classList.add('hidden');
+    if (loading) loading.classList.remove('hidden');
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/value-investing/stocks/${candidateId}`);
+        const text = await resp.text();
+        let data = {};
+        try { data = JSON.parse(text); } catch (_) { }
+        if (!resp.ok) throw new Error(data?.detail || data?.message || text || 'Failed to load details');
+        renderValueDetail(data);
+    } catch (e) {
+        if (errorMsg) errorMsg.textContent = `Failed to load: ${e.message}`;
+        if (errorBox) errorBox.classList.remove('hidden');
+    } finally {
+        if (loading) loading.classList.add('hidden');
+    }
+}
+
+function closeValueDetail() {
+    const panel = document.getElementById('value-detail-panel');
+    if (panel) panel.classList.add('hidden');
+}
+
+function renderValueDetail(data) {
+    const content = document.getElementById('value-detail-content');
+    const title = document.getElementById('value-detail-title');
+    if (!content) return;
+
+    const c = data.candidate || {};
+    const flags = data.moat_flags || [];
+    const reasons = data.undervalued_reasons || [];
+    const tap = data.sources?.tapetide || {};
+    const profile = tap.profile || {};
+    const fundamentals = profile.fundamentals || {};
+    const growth = profile.growth_metrics || {};
+    const ratios = tap.ratios || {};
+    const pl = tap.profit_loss || {};
+    const fair = data.fair_value || {};
+    const dcf = data.mini_dcf || {};
+    const timeFair = data.time_to_fair || {};
+    const ltpLabel = c.ltp != null ? `₹${Number(c.ltp).toFixed(2)}` : '-';
+    const ltpSource = c.ltp_source ? ` (${c.ltp_source})` : '';
+
+    if (title) title.textContent = `${c.symbol || ''} • Value Insight`;
+
+    const metric = (label, value, suffix = '') => `
+        <div class="flex items-center justify-between text-2xs py-1" style="border-bottom:1px solid var(--glass-border)">
+            <span style="color:var(--text-muted)">${label}</span>
+            <span style="color:var(--text-heading)">${value != null && value !== '' ? value : '-'}${suffix}</span>
+        </div>`;
+
+    const fmt = n => n != null ? new Intl.NumberFormat('en-IN').format(Math.round(n)) : '-';
+    const pct = n => n != null ? `${Number(n).toFixed(1)}%` : '-';
+    const num = n => n != null ? Number(n).toFixed(2) : '-';
+
+    const moatHtml = flags.length
+        ? flags.map(f => `<span class="text-2xs px-1.5 py-0.5 rounded-full" style="background:rgba(34,197,94,0.12);color:#22c55e">${f}</span>`).join(' ')
+        : `<span class="text-2xs" style="color:var(--text-muted)">No moat flags yet</span>`;
+
+    const ratioMetrics = ratios.metrics || {};
+    const plMetrics = pl.metrics || {};
+
+    content.innerHTML = `
+        <div class="mb-3">
+            <div class="flex flex-wrap gap-2 mb-2">${moatHtml}</div>
+            <div class="grid grid-cols-2 gap-2 text-2xs">
+                <div class="glass-card-sm p-2">
+                    <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Score Breakdown</div>
+                    ${metric('Overall', c.score != null ? Math.round(c.score * 100) + '%' : '-') }
+                    ${metric('Valuation', c.valuation_score != null ? Math.round(c.valuation_score * 100) + '%' : '-') }
+                    ${metric('Quality', c.quality_score != null ? Math.round(c.quality_score * 100) + '%' : '-') }
+                    ${metric('Growth', c.growth_score != null ? Math.round(c.growth_score * 100) + '%' : '-') }
+                    ${metric('Ownership', c.ownership_score != null ? Math.round(c.ownership_score * 100) + '%' : '-') }
+                </div>
+                <div class="glass-card-sm p-2">
+                    <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Key Metrics</div>
+                    ${metric('Market Cap (Cr)', fmt(c.market_cap))}
+                    ${metric('LTP', `${ltpLabel}${ltpSource}`)}
+                    ${metric('PE / PB', `${num(c.pe)} / ${num(c.pb)}`)}
+                    ${metric('ROCE / ROE', `${num(c.roce)}% / ${num(c.roe)}%`)}
+                    ${metric('Debt/Equity', num(c.debt_to_eq))}
+                    ${metric('Operating Margin', num(c.operating_margin) + '%')}
+                    ${metric('Revenue Growth', num(c.revenue_growth) + '%')}
+                    ${metric('EPS Growth', num(c.eps_growth) + '%')}
+                    ${metric('Promoter Holding', pct(c.promoter_holding))}
+                    ${metric('Fair Value Range', fair.fair_value_low && fair.fair_value_high ? `₹${fair.fair_value_low} - ₹${fair.fair_value_high}` : '-')}
+                    ${metric('Upside', fair.upside_pct != null ? fair.upside_pct.toFixed(1) + '%' : '-')}
+                    ${metric('Mini DCF Range', dcf.dcf_low && dcf.dcf_high ? `₹${dcf.dcf_low} - ₹${dcf.dcf_high}` : '-')}
+                    ${metric('DCF Upside', dcf.upside_pct != null ? dcf.upside_pct.toFixed(1) + '%' : '-')}
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-card-sm p-2 mb-3">
+            <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Valuation Formula</div>
+            <div class="text-2xs" style="color:var(--text-muted)">
+                <div style="margin-bottom:6px">
+                    <strong>Fair Value (PE Range)</strong><br/>
+                    EPS = LTP ÷ PE (when EPS not available)<br/>
+                    Fair Value Low = EPS × PE Low<br/>
+                    Fair Value High = EPS × PE High<br/>
+                    ${fair.pe_low && fair.pe_high ? `PE Band = ${fair.pe_low} – ${fair.pe_high}` : ''}<br/>
+                    ${c.ltp != null && c.pe != null ? `LTP ₹${Number(c.ltp).toFixed(2)} / PE ${Number(c.pe).toFixed(2)} → EPS ${c.ltp && c.pe ? (Number(c.ltp) / Number(c.pe)).toFixed(2) : '-'}` : ''}
+                </div>
+                <div>
+                    <strong>Mini DCF</strong><br/>
+                    EPS grows for 5 years (growth band ${dcf.growth_low || '-'}%–${dcf.growth_high || '-'}%)<br/>
+                    Discount rate = 12%<br/>
+                    Terminal value = Year‑5 EPS × 12 (terminal multiple)<br/>
+                    ${dcf.dcf_low && dcf.dcf_high ? `DCF Range = ₹${dcf.dcf_low} – ₹${dcf.dcf_high}` : ''}
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-card-sm p-2 mb-3">
+            <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Estimated Time to Fair Value</div>
+            <div class="text-2xs" style="color:var(--text-muted)">
+                Best probable: <strong>${timeFair.best_years != null ? `${timeFair.best_years.toFixed(1)} yrs` : '-'}</strong><br/>
+                ${timeFair.estimates ? `EPS growth: ${timeFair.estimates.eps_growth ?? '-'} yrs · Fixed: ${timeFair.estimates.fixed ?? '-'} yrs · DCF mid: ${timeFair.estimates.dcf_mid ?? '-'} yrs` : ''}
+            </div>
+        </div>
+
+        <div class="glass-card-sm p-2 mb-3">
+            <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Tapetide Fundamentals</div>
+            <div class="text-2xs mb-2" style="color:var(--text-muted)">${profile.company?.about || 'No company summary available.'}</div>
+            <div class="grid grid-cols-2 gap-2 text-2xs">
+                <div>
+                    ${metric('ROCE', num(fundamentals.roce) + '%')}
+                    ${metric('ROE', num(fundamentals.roe) + '%')}
+                    ${metric('Debt/Equity', num(fundamentals.debt_to_equity))}
+                    ${metric('Dividend Yield', num(fundamentals.dividend_yield) + '%')}
+                </div>
+                <div>
+                    ${metric('Revenue (Yr)', fmt(fundamentals.yearly_revenue))}
+                    ${metric('Net Income', fmt(fundamentals.net_income))}
+                    ${metric('Revenue Growth 1Y', num(fundamentals.revenue_growth_1y) + '%')}
+                    ${metric('YoY Profit Growth', num(fundamentals.yoy_quarterly_profit_growth) + '%')}
+                </div>
+            </div>
+            <div class="text-2xs mt-2" style="color:var(--text-muted)">Latest ratios (${ratios.latest_period || 'n/a'})</div>
+            <div class="grid grid-cols-2 gap-2 text-2xs">
+                <div>${metric('ROCE %', num(ratioMetrics['ROCE %']))}</div>
+                <div>${metric('ROE %', num(ratioMetrics['ROE %']))}</div>
+                <div>${metric('OPM %', num(ratioMetrics['OPM %']))}</div>
+                <div>${metric('Net Profit %', num(ratioMetrics['Net Profit %']))}</div>
+            </div>
+        </div>
+
+        <div class="glass-card-sm p-2 mb-3">
+            <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Why It Looks Undervalued</div>
+            <ul class="text-2xs" style="color:var(--text-muted);padding-left:14px;list-style:disc">
+                ${(reasons.length ? reasons : ['No specific undervaluation cues available']).map(r => `<li>${r}</li>`).join('')}
+            </ul>
+        </div>
+
+        <div class="glass-card-sm p-2 mb-3">
+            <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Multi-source Signals</div>
+            <div class="text-2xs" style="color:var(--text-muted)">Tickertape scorecard + Moneycontrol mini statements</div>
+            <div class="grid grid-cols-2 gap-2 text-2xs mt-2">
+                <div>
+                    <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Tickertape</div>
+                    <div style="color:var(--text-muted)">${tapetideSectionSummary(data.sources?.tickertape)}</div>
+                </div>
+                <div>
+                    <div class="text-2xs font-semibold mb-1" style="color:var(--text-heading)">Moneycontrol</div>
+                    <div style="color:var(--text-muted)">${tapetideSectionSummary(data.sources?.moneycontrol)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    content.classList.remove('hidden');
+}
+
+function tapetideSectionSummary(section) {
+    if (!section || section.error) return 'Not available';
+    if (section.scorecard) return `${section.scorecard.length} scorecard rows`;
+    if (section.overview || section.ratios) return 'Overview + ratios loaded';
+    return 'Available';
 }
 
 async function loadSectorOptions() {
@@ -1742,13 +2287,23 @@ async function loadFnoSignals() {
         const showCE = !dirFilters.length || dirFilters.includes('CE');
         const showPE = !dirFilters.length || dirFilters.includes('PE');
 
-        const ceSignals = showCE ? signals.filter(s => s.signal_type === 'CE') : [];
-        const peSignals = showPE ? signals.filter(s => s.signal_type === 'PE') : [];
-        const manualCE = showCE ? signals.filter(s => s.signal_type === 'manual') : [];
-        const otherSignals = !dirFilters.length ? signals.filter(s => !['CE', 'PE', 'manual'].includes(s.signal_type)) : [];
+        const advSignals = signals.filter(s => isAdvDeclSignal(s.signal_type));
+        const coreSignals = signals.filter(s => !isAdvDeclSignal(s.signal_type));
+
+        const ceSignals = showCE ? coreSignals.filter(s => getSignalDirection(s.signal_type) === 'CE') : [];
+        const peSignals = showPE ? coreSignals.filter(s => getSignalDirection(s.signal_type) === 'PE') : [];
+        const manualCE = showCE ? coreSignals.filter(s => s.signal_type === 'manual') : [];
+        const otherSignals = !dirFilters.length
+            ? coreSignals.filter(s => !['CE', 'PE', 'manual'].includes(getSignalDirection(s.signal_type)))
+            : [];
+
+        const advCe = showCE ? advSignals.filter(s => getSignalDirection(s.signal_type) === 'CE') : [];
+        const advPe = showPE ? advSignals.filter(s => getSignalDirection(s.signal_type) === 'PE') : [];
 
         const allCe = groupSignals([...ceSignals, ...manualCE, ...otherSignals]);
         const allPe = groupSignals([...peSignals]);
+        const allAdvCe = groupSignals([...advCe]);
+        const allAdvPe = groupSignals([...advPe]);
 
         const secIds = [...new Set(signals.map(s => s.security_id))];
         let cmpMap = {};
@@ -1765,6 +2320,8 @@ async function loadFnoSignals() {
 
         renderFnoTable('fno-ce-table', allCe, cmpMap, 'CE');
         renderFnoTable('fno-pe-table', allPe, cmpMap, 'PE');
+        renderFnoTable('fno-ad-ce-table', allAdvCe, cmpMap, 'CE', 'No CE Adv/Decl setups found');
+        renderFnoTable('fno-ad-pe-table', allAdvPe, cmpMap, 'PE', 'No PE Adv/Decl setups found');
     } catch (err) {
         console.error('Error loading F&O signals:', err);
     }
@@ -1798,8 +2355,8 @@ function toggleHistoryRows(secId) {
     if (chevron) chevron.classList.toggle('expanded', !visible);
 }
 
-function renderFnoTable(containerId, groups, cmpMap, direction) {
-    const emptyMsg = direction === 'CE' ? 'No CE setups found' : 'No PE setups found';
+function renderFnoTable(containerId, groups, cmpMap, direction, emptyMessage) {
+    const emptyMsg = emptyMessage || (direction === 'CE' ? 'No CE setups found' : 'No PE setups found');
 
     if (!groups.length) {
         document.getElementById(containerId).innerHTML = `<div class="p-4 text-center text-2xs" style="color:var(--text-muted)">${emptyMsg}</div>`;
@@ -1820,7 +2377,9 @@ function renderFnoTable(containerId, groups, cmpMap, direction) {
 
         const typeBadge = s.signal_type === 'manual'
             ? `<span class="text-2xs px-1 py-0.5 rounded" style="background:var(--badge-manual-bg);color:var(--text-muted)">manual</span>`
-            : '';
+            : isAdvDeclSignal(s.signal_type)
+                ? `<span class="text-2xs px-1 py-0.5 rounded" style="background:rgba(14,116,144,0.15);color:#67e8f9">ADV/DECL</span>`
+                : '';
 
         const hasHistory = s._history && s._history.length > 0;
         const occBadge = s._totalOccurrences > 1
@@ -1903,7 +2462,11 @@ async function toggleTrack(signalId) {
 }
 
 async function runFnoScan() {
-    const btn = document.getElementById('btn-fno-scan');
+    return runFnoScanCore();
+}
+
+async function runFnoScanCore() {
+    const btn = document.getElementById('btn-fno-scan-core');
     const statusEl = document.getElementById('fno-scan-status');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Scanning...';
@@ -1911,7 +2474,7 @@ async function runFnoScan() {
     statusEl.style.color = '#6366f1';
 
     try {
-        let url = `${API_BASE}/api/settings/scan/run?section=fno`;
+        let url = `${API_BASE}/api/settings/scan/run?section=fno&setup=core`;
         let requestOptions = { method: 'POST' };
         
         // If custom mode, send custom sectors
@@ -1977,7 +2540,53 @@ async function runFnoScan() {
         statusEl.style.color = '#ef4444';
     } finally {
         btn.disabled = false;
-        btn.innerHTML = 'Scan F&O';
+        btn.innerHTML = 'Scan Core';
+    }
+}
+
+async function runFnoScanAdvDecl() {
+    const btn = document.getElementById('btn-fno-scan-adv');
+    const statusEl = document.getElementById('fno-advdecl-status');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scanning...';
+    if (statusEl) {
+        statusEl.textContent = 'Computing breadth + momentum filters...';
+        statusEl.style.color = '#6366f1';
+    }
+
+    try {
+        const url = `${API_BASE}/api/settings/scan/run?section=fno&setup=advdecl`;
+        const response = await fetch(url, { method: 'POST' });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error('Failed to parse JSON response:', responseText);
+            throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}...`);
+        }
+
+        const adv = data.summary?.advdecl_intraday || {};
+        const ratio = adv.ad_ratio != null ? adv.ad_ratio : '-';
+        const bias = adv.bias || 'neutral';
+        const msg = `A/D ${ratio} (${adv.advancers || 0} / ${adv.decliners || 0}) • Bias ${bias.toUpperCase()} • Signals ${adv.signals || 0} • Scanned ${adv.scanned || 0}`;
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.style.color = adv.signals ? '#22c55e' : '#eab308';
+        }
+        loadFnoSignals();
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `Scan failed: ${err.message}`;
+            statusEl.style.color = '#ef4444';
+        }
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Scan Adv/Decl';
     }
 }
 

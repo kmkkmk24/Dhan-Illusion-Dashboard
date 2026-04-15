@@ -474,6 +474,15 @@ class FnoScanner:
             if past_count > 0:
                 logger.info(f"F&O recurrence: {result['symbol']} ({result['direction']}) {past_count + 1}th time")
 
+    @staticmethod
+    def _signal_direction(signal_type: str) -> str:
+        st = (signal_type or "").upper()
+        if st.startswith("CE"):
+            return "CE"
+        if st.startswith("PE"):
+            return "PE"
+        return st
+
     async def revalidate_signals(self, section: str = "fno") -> dict:
         """
         Re-evaluate all active and tracked signals with fresh market data.
@@ -527,7 +536,7 @@ class FnoScanner:
                 ema_s = pd.Series(close).ewm(span=self.ema_slow, adjust=False).mean().values
 
                 trend = self._detect_trend(close, high, low, ema_f, ema_s)
-                direction = sig.signal_type  # CE or PE
+                direction = self._signal_direction(sig.signal_type)  # CE or PE
 
                 old_score = sig.current_score
                 detail = {"symbol": sig.symbol, "old_score": old_score, "action": "ok"}

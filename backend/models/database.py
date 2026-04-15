@@ -53,6 +53,7 @@ def init_db():
         SignalHistory,
         SectorScore,
         Trade,
+        ValueCandidate,
     )
 
     engine = get_engine()

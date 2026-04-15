@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.config import get_config
 from backend.models.database import get_db
 from backend.models.tables import Signal, SignalHistory, Instrument, Trade
 from backend.models.schemas import SignalOut, SignalDetailOut, SignalHistoryOut
@@ -14,6 +15,15 @@ from backend.services.dhan_client import DhanClient
 from backend.services.instrument_manager import get_fno_lot_size_for_underlying
 
 logger = logging.getLogger(__name__)
+
+
+def _signal_direction(signal_type: str) -> str:
+    st = (signal_type or "").upper()
+    if st.startswith("CE"):
+        return "CE"
+    if st.startswith("PE"):
+        return "PE"
+    return st
 
 
 def _option_lot_size_from_chain(chain_data: dict) -> int | None:
@@ -29,6 +39,18 @@ def _option_lot_size_from_chain(chain_data: dict) -> int | None:
                     return n
             except (TypeError, ValueError):
                 continue
+    return None
+
+
+def _get_index_config_for_signal(signal: Signal) -> dict | None:
+    cfg = get_config().get("index_trading") or {}
+    indices = cfg.get("indices") or []
+    for item in indices:
+        if str(item.get("security_id")) == str(signal.security_id):
+            return item
+        sym = str(item.get("symbol") or item.get("name") or "")
+        if sym and sym == signal.symbol:
+            return item
     return None
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -532,10 +554,40 @@ async def get_option_analysis(
     instrument = db.query(Instrument).filter(
         Instrument.security_id == signal.security_id
     ).first()
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
 
     client = DhanClient()
     try:
-        expiries = await client.get_expiry_list(signal.security_id, "NSE_EQ")
+        expiries = await client.get_expiry_list(signal.security_id, segment)
         if not expiries:
             raise HTTPException(status_code=404, detail="No expiries found")
 
@@ -566,7 +618,7 @@ async def get_option_analysis(
             if attempt > 0:
                 await asyncio.sleep(3)
             chain = await client.get_option_chain(
-                signal.security_id, "NSE_EQ", target_exp["date"]
+                signal.security_id, segment, target_exp["date"]
             )
             if chain and chain.get("data", {}).get("oc"):
                 break
@@ -588,7 +640,13 @@ async def get_option_analysis(
         oc = chain_data.get("oc", {})
 
         lot_from_chain = _option_lot_size_from_chain(chain_data)
-        lot_size = lot_from_chain or get_fno_lot_size_for_underlying(db, instrument)
+        lot_from_cfg = None
+        if idx_cfg and idx_cfg.get("lot_size"):
+            try:
+                lot_from_cfg = int(idx_cfg.get("lot_size"))
+            except (TypeError, ValueError):
+                lot_from_cfg = None
+        lot_size = lot_from_chain or lot_from_cfg or get_fno_lot_size_for_underlying(db, instrument)
 
         if not spot_price:
             from fastapi.responses import JSONResponse
@@ -601,7 +659,7 @@ async def get_option_analysis(
                 },
             )
 
-        direction = signal.signal_type
+        direction = _signal_direction(signal.signal_type)
         side = "ce" if direction in ("CE", "manual", "consolidation") else "pe"
         dte = target_exp["dte"]
 
@@ -971,7 +1029,7 @@ async def get_expiry_scores(
 
     client = DhanClient()
     try:
-        expiries = await client.get_expiry_list(signal.security_id, "NSE_EQ")
+        expiries = await client.get_expiry_list(signal.security_id, segment)
         if not expiries:
             return {"scores": {}}
 
@@ -986,7 +1044,7 @@ async def get_expiry_scores(
             except ValueError:
                 continue
 
-        direction = signal.signal_type
+        direction = _signal_direction(signal.signal_type)
         side = "ce" if direction in ("CE", "manual", "consolidation") else "pe"
 
         scores = {}
@@ -996,7 +1054,7 @@ async def get_expiry_scores(
 
             try:
                 chain = await client.get_option_chain(
-                    signal.security_id, "NSE_EQ", exp["date"]
+                    signal.security_id, segment, exp["date"]
                 )
                 if not chain or not isinstance(chain.get("data"), dict):
                     scores[exp["date"]] = {"conviction": "none", "reason": "No data"}
@@ -1123,6 +1181,12 @@ async def live_advisory(
     instrument = db.query(Instrument).filter(
         Instrument.security_id == signal.security_id
     ).first()
+    idx_cfg = _get_index_config_for_signal(signal)
+    segment = (
+        (idx_cfg or {}).get("option_segment")
+        or (idx_cfg or {}).get("exchange_segment")
+        or "NSE_EQ"
+    )
 
     today = date.today()
     exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
@@ -1150,17 +1214,24 @@ async def live_advisory(
     client = DhanClient()
     try:
         # Fetch current option chain for live premium and Greeks
-        chain = await client.get_option_chain(signal.security_id, "NSE_EQ", expiry)
+        chain = await client.get_option_chain(signal.security_id, segment, expiry)
         if not chain or "data" not in chain or not isinstance(chain["data"], dict):
             raise HTTPException(status_code=502, detail="Could not fetch live option chain")
 
         chain_data = chain["data"]
-        lot_size = _option_lot_size_from_chain(chain_data) or get_fno_lot_size_for_underlying(
+        lot_from_chain = _option_lot_size_from_chain(chain_data)
+        lot_from_cfg = None
+        if idx_cfg and idx_cfg.get("lot_size"):
+            try:
+                lot_from_cfg = int(idx_cfg.get("lot_size"))
+            except (TypeError, ValueError):
+                lot_from_cfg = None
+        lot_size = lot_from_chain or lot_from_cfg or get_fno_lot_size_for_underlying(
             db, instrument
         )
         spot_price = float(chain_data.get("last_price", 0))
         if not spot_price:
-            quote = await client.get_market_quote_ohlc([signal.security_id], "NSE_EQ")
+            quote = await client.get_market_quote_ohlc([signal.security_id], segment)
             if quote and "data" in quote and isinstance(quote["data"], dict):
                 for seg_key, seg_data in quote["data"].items():
                     if isinstance(seg_data, dict):

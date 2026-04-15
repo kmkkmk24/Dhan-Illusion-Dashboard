@@ -187,3 +187,45 @@ class Trade(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     signal = relationship("Signal", back_populates="trades")
+
+
+class ValueCandidate(Base):
+    __tablename__ = "value_candidates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    security_id = Column(String(20), index=True)
+    symbol = Column(String(50), index=True)
+    display_name = Column(String(120))
+    exchange = Column(String(10))
+    sector = Column(String(50))
+    isin = Column(String(20))
+
+    score = Column(Float, default=0.0)
+    valuation_score = Column(Float)
+    quality_score = Column(Float)
+    growth_score = Column(Float)
+    ownership_score = Column(Float)
+
+    market_cap = Column(Float)
+    pe = Column(Float)
+    pb = Column(Float)
+    roce = Column(Float)
+    roe = Column(Float)
+    debt_to_eq = Column(Float)
+    operating_margin = Column(Float)
+    revenue_growth = Column(Float)
+    eps_growth = Column(Float)
+    promoter_holding = Column(Float)
+
+    source = Column(String(30), default="tapetide")
+    source_id = Column(String(30))
+    source_slug = Column(String(120))
+    raw_data = Column(Text)
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_value_symbol_exchange", "symbol", "exchange", unique=True),
+        Index("idx_value_score", "score"),
+    )

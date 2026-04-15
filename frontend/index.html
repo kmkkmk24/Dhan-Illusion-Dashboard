@@ -63,6 +63,16 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
                 <span>Stock Options</span>
             </div>
+            <div onclick="switchTab('index')" id="tab-index" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 4-6"/></svg>
+                <span>Index Trading</span>
+            </div>
+            <div onclick="switchTab('value')" id="tab-value" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 7h16M4 12h16M4 17h16"/><path d="M8 3v18"/>
+                </svg>
+                <span>Value Investing</span>
+            </div>
             <div onclick="switchTab('journal')" id="tab-journal" class="nav-item">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 2v4M16 2v4M4 10h16"/></svg>
                 <span>Trade Journal</span>
@@ -200,7 +210,8 @@
                         <button class="filter-pill" data-value="80" onclick="togglePill(this,'fno')">&gt;80%</button>
                     </div>
                     <button onclick="toggleFnoScanMode()" id="btn-fno-mode" class="btn-secondary px-3 py-1 rounded-lg text-2xs">Auto Mode</button>
-                    <button onclick="runFnoScan()" id="btn-fno-scan" class="btn-primary px-3 py-1 rounded-lg text-2xs">Scan F&O</button>
+                    <button onclick="runFnoScanCore()" id="btn-fno-scan-core" class="btn-primary px-3 py-1 rounded-lg text-2xs">Scan Core</button>
+                    <button onclick="runFnoScanAdvDecl()" id="btn-fno-scan-adv" class="btn-secondary px-3 py-1 rounded-lg text-2xs">Scan Adv/Decl</button>
                 </div>
             </div>
 
@@ -238,7 +249,13 @@
                 <p id="fno-scan-status" class="text-2xs" style="color:var(--text-muted)"></p>
                 <div id="fno-scheduler-status" class="text-2xs flex items-center gap-1" style="color:var(--text-muted)"></div>
             </div>
-            <div class="flex gap-3 flex-1 overflow-hidden">
+            <div class="flex items-center gap-2 mb-2 flex-shrink-0">
+                <div class="filter-pills" id="fno-subtab">
+                    <button class="filter-pill active" data-value="core" onclick="switchFnoSubTab('core', this)">Consolidation/Explosion</button>
+                    <button class="filter-pill" data-value="advdecl" onclick="switchFnoSubTab('advdecl', this)">Adv/Decl Intraday</button>
+                </div>
+            </div>
+            <div id="fno-core-panel" class="flex gap-3 flex-1 overflow-hidden">
                 <div class="flex-1 flex flex-col overflow-hidden">
                     <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#22c55e">
                         <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span> CE Setups (Bullish)
@@ -256,6 +273,27 @@
                     </div>
                 </div>
             </div>
+            <div id="fno-advdecl-panel" class="hidden flex gap-3 flex-1 overflow-hidden">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                        <p id="fno-advdecl-status" class="text-2xs" style="color:var(--text-muted)"></p>
+                    </div>
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#22c55e">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span> CE Adv/Decl Setups
+                    </h3>
+                    <div id="fno-ad-ce-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run F&O scan to find Adv/Decl CE setups</div>
+                    </div>
+                </div>
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#ef4444">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;box-shadow:0 0 6px rgba(239,68,68,0.4)"></span> PE Adv/Decl Setups
+                    </h3>
+                    <div id="fno-ad-pe-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run F&O scan to find Adv/Decl PE setups</div>
+                    </div>
+                </div>
+            </div>
             <div id="fno-add-modal" class="hidden fixed inset-0 modal-overlay flex items-center justify-center z-50">
                 <div class="modal-card rounded-2xl shadow-xl p-5 w-80">
                     <h3 class="text-sm font-bold mb-2" style="color:var(--text-heading)">Add Stock to F&O Tracker</h3>
@@ -267,22 +305,57 @@
                     </div>
                 </div>
             </div>
-            <!-- Option Analysis Slide Panel -->
-            <div id="option-analysis-panel" class="analysis-panel hidden">
-                <div class="analysis-panel-inner">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 id="analysis-title" class="text-sm font-bold" style="color:var(--text-heading)">Option Analysis</h3>
-                        <button onclick="closeAnalysisPanel()" class="text-xs" style="color:var(--text-muted);cursor:pointer">✕ Close</button>
-                    </div>
-                    <div id="analysis-loading" class="hidden p-10 text-center">
-                        <span class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto"></span>
-                        <p class="text-xs mt-2" style="color:var(--text-muted)">Fetching option chain & analyzing Greeks...</p>
-                    </div>
-                    <div id="analysis-error" class="hidden p-6 text-center">
-                        <p class="text-xs" style="color:#ef4444" id="analysis-error-msg"></p>
-                    </div>
-                    <div id="analysis-content" class="hidden overflow-y-auto" style="max-height:calc(100vh - 160px)"></div>
+        </section>
+
+        <!-- Index Trading Tab -->
+        <section id="content-index" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-xs font-bold" style="color:var(--text-heading)">Index Trading</h2>
+                    <span class="text-2xs" style="color:var(--text-muted)">Intraday 15m hybrid + Positional (next week)</span>
                 </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="runIndexScan('intraday')" id="btn-index-scan" class="btn-secondary px-3 py-1 rounded-lg text-2xs">Scan Intraday</button>
+                    <button onclick="runIndexScan('positional')" id="btn-index-scan-positional" class="btn-primary px-3 py-1 rounded-lg text-2xs">Scan Positional</button>
+                </div>
+            </div>
+            <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                <p id="index-scan-status" class="text-2xs" style="color:var(--text-muted)"></p>
+            </div>
+            <div class="flex gap-3 flex-1 overflow-hidden">
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#22c55e">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span> CE Index Setups
+                    </h3>
+                    <div id="index-ce-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run Index scan to find CE setups</div>
+                    </div>
+                </div>
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#ef4444">
+                        <span style="width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;box-shadow:0 0 6px rgba(239,68,68,0.4)"></span> PE Index Setups
+                    </h3>
+                    <div id="index-pe-table" class="glass-card-sm overflow-auto flex-1">
+                        <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run Index scan to find PE setups</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Value Investing Tab -->
+        <section id="content-value" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+            <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-xs font-bold" style="color:var(--text-heading)">Value Investing</h2>
+                    <span class="text-2xs" style="color:var(--text-muted)">Multi-source fundamentals • Long-term compounders</span>
+                </div>
+                <button onclick="refreshValueInvesting()" id="btn-value-refresh" class="btn-primary px-3 py-1 rounded-lg text-2xs">Refresh Fundamentals</button>
+            </div>
+            <div class="flex items-center justify-between mb-1 flex-shrink-0">
+                <p id="value-scan-status" class="text-2xs" style="color:var(--text-muted)"></p>
+            </div>
+            <div id="value-table" class="glass-card overflow-auto flex-1">
+                <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run refresh to load value candidates</div>
             </div>
         </section>
 
@@ -306,6 +379,42 @@
                 </div>
             </div>
         </section>
+
+        <!-- Option Analysis Slide Panel (global) -->
+        <div id="option-analysis-panel" class="analysis-panel hidden">
+            <div class="analysis-panel-inner">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 id="analysis-title" class="text-sm font-bold" style="color:var(--text-heading)">Option Analysis</h3>
+                    <button onclick="closeAnalysisPanel()" class="text-xs" style="color:var(--text-muted);cursor:pointer">✕ Close</button>
+                </div>
+                <div id="analysis-loading" class="hidden p-10 text-center">
+                    <span class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto"></span>
+                    <p class="text-xs mt-2" style="color:var(--text-muted)">Fetching option chain & analyzing Greeks...</p>
+                </div>
+                <div id="analysis-error" class="hidden p-6 text-center">
+                    <p class="text-xs" style="color:#ef4444" id="analysis-error-msg"></p>
+                </div>
+                <div id="analysis-content" class="hidden overflow-y-auto" style="max-height:calc(100vh - 160px)"></div>
+            </div>
+        </div>
+
+        <!-- Value Investing Detail Panel -->
+        <div id="value-detail-panel" class="analysis-panel hidden">
+            <div class="analysis-panel-inner">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 id="value-detail-title" class="text-sm font-bold" style="color:var(--text-heading)">Value Insight</h3>
+                    <button onclick="closeValueDetail()" class="text-xs" style="color:var(--text-muted);cursor:pointer">✕ Close</button>
+                </div>
+                <div id="value-detail-loading" class="hidden p-10 text-center">
+                    <span class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto"></span>
+                    <p class="text-xs mt-2" style="color:var(--text-muted)">Loading fundamentals and moat signals...</p>
+                </div>
+                <div id="value-detail-error" class="hidden p-6 text-center">
+                    <p class="text-xs" style="color:#ef4444" id="value-detail-error-msg"></p>
+                </div>
+                <div id="value-detail-content" class="hidden overflow-y-auto" style="max-height:calc(100vh - 160px)"></div>
+            </div>
+        </div>
 
         <!-- Settings Tab -->
         <section id="content-settings" class="tab-content hidden flex flex-col flex-1 overflow-hidden">

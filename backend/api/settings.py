@@ -62,7 +62,7 @@ def list_fno_stocks(db: Session = Depends(get_db)):
 
 
 @router.post("/scan/run")
-async def run_scan(section: str = "swing", db: Session = Depends(get_db)):
+async def run_scan(section: str = "swing", setup: str | None = None, db: Session = Depends(get_db)):
     """
     Manually trigger a scan.
 
@@ -72,45 +72,66 @@ async def run_scan(section: str = "swing", db: Session = Depends(get_db)):
     try:
         if section == "fno":
             from backend.services.fno_scanner import FnoScanner
+            from backend.services.advdecl_intraday_scanner import AdvDeclIntradayScanner
 
-            scanner = FnoScanner(db)
+            mode = (setup or "all").lower()
+            if mode not in ("all", "core", "advdecl"):
+                mode = "all"
 
-            # Step 1: Revalidate existing active/tracked signals with fresh data
-            reval = await scanner.revalidate_signals("fno")
+            summary = {}
 
-            # Step 2: Run sector analysis to get top sectors
-            analyzer = SectorAnalyzer(db)
-            sector_results = await analyzer.analyze_sectors()
-
-            if not sector_results:
-                return {
-                    "message": "Sector analysis returned no results. Check API connection.",
-                    "summary": {"revalidation": reval},
-                }
-
-            from backend.config import get_config
-            fno_config = get_config().get("fno_scanner", {})
-            top_n = fno_config.get("top_sectors", 4)
-
-            top_sectors_ce = [s["sector_name"] for s in sector_results[:top_n]]
-            bottom = sector_results[-top_n:]
-            top_sectors_pe = [s["sector_name"] for s in bottom]
-
-            # Step 3: Get F&O instruments
+            # Step 1: Get F&O instruments (needed for all modes)
             instruments = instrument_manager.get_fno_stocks(db)
             if not instruments:
                 return {
                     "message": "No instruments loaded. Run 'Refresh Instruments' first.",
-                    "summary": {"revalidation": reval},
+                    "summary": {},
                 }
 
-            # Step 4: Discover new setups (reuses the same scanner/dhan client)
-            scanner_fresh = FnoScanner(db)
-            summary = await scanner_fresh.scan_fno(instruments, top_sectors_ce, top_sectors_pe)
-            summary["revalidation"] = reval
+            if mode in ("core", "all"):
+                scanner = FnoScanner(db)
 
+                # Revalidate existing active/tracked signals with fresh data
+                reval = await scanner.revalidate_signals("fno")
+
+                # Run sector analysis to get top sectors
+                analyzer = SectorAnalyzer(db)
+                sector_results = await analyzer.analyze_sectors()
+
+                if not sector_results:
+                    if mode == "core":
+                        return {
+                            "message": "Sector analysis returned no results. Check API connection.",
+                            "summary": {"revalidation": reval},
+                        }
+                    summary["revalidation"] = reval
+                else:
+                    from backend.config import get_config
+
+                    fno_config = get_config().get("fno_scanner", {})
+                    top_n = fno_config.get("top_sectors", 4)
+
+                    top_sectors_ce = [s["sector_name"] for s in sector_results[:top_n]]
+                    bottom = sector_results[-top_n:]
+                    top_sectors_pe = [s["sector_name"] for s in bottom]
+
+                    # Discover new setups (reuses the same scanner/dhan client)
+                    scanner_fresh = FnoScanner(db)
+                    core_summary = await scanner_fresh.scan_fno(instruments, top_sectors_ce, top_sectors_pe)
+                    core_summary["revalidation"] = reval
+                    summary.update(core_summary)
+
+            if mode in ("advdecl", "all"):
+                adv_scanner = AdvDeclIntradayScanner(db)
+                adv_summary = await adv_scanner.scan(instruments)
+                summary["advdecl_intraday"] = adv_summary
+
+            if mode == "advdecl":
+                return {"message": "Adv/Decl intraday scan complete.", "summary": summary}
+            if mode == "core":
+                return {"message": "Core F&O scan complete.", "summary": summary}
             return {
-                "message": f"F&O scan complete: CE sectors={top_sectors_ce}, PE sectors={top_sectors_pe}",
+                "message": "F&O scan complete.",
                 "summary": summary,
             }
 

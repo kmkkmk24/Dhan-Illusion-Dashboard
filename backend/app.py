@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from backend.config import FRONTEND_DIR
 from backend.models.database import init_db
-from backend.api import scanner, watchlist, journal, settings
+from backend.api import scanner, watchlist, journal, settings, index_trading, value_investing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +47,8 @@ app.include_router(scanner.router)
 app.include_router(watchlist.router)
 app.include_router(journal.router)
 app.include_router(settings.router)
+app.include_router(index_trading.router)
+app.include_router(value_investing.router)
 
 
 # Health check

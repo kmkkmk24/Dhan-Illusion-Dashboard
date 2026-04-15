@@ -95,11 +95,13 @@ def get_dhan_credentials() -> dict:
         ui_credentials = settings_manager.load_credentials()
         if ui_credentials:
             logger.info("Using UI credentials for Dhan client")
+            config = get_config()
+            access_token = get_env_var("DHAN_ACCESS_TOKEN") or config.get("dhan", {}).get("access_token")
             return {
                 "client_id": ui_credentials["client_id"],
                 "api_key": ui_credentials["api_key"],
                 "api_secret": ui_credentials["api_secret"],
-                "access_token": get_env_var("DHAN_ACCESS_TOKEN"),  # Access token from env
+                "access_token": access_token,  # env or config token
             }
         else:
             logger.info("No UI credentials found, falling back to environment variables")
