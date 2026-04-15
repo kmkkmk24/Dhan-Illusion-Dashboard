@@ -3179,9 +3179,31 @@ function ordinal(n) {
 }
 
 function daysSince(dateStr) {
-    const d = new Date(dateStr);
+    if (!dateStr) return 0;
     const now = new Date();
-    return Math.floor((now - d) / (1000 * 60 * 60 * 24));
+    let d = null;
+
+    if (typeof dateStr === 'string') {
+        const dateOnly = dateStr.split('T')[0];
+        const parts = dateOnly.split('-');
+        if (parts.length === 3) {
+            const year = Number(parts[0]);
+            const month = Number(parts[1]);
+            const day = Number(parts[2]);
+            if (!Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)) {
+                d = new Date(year, month - 1, day);
+            }
+        }
+    }
+
+    if (!d) {
+        d = new Date(dateStr);
+    }
+
+    if (Number.isNaN(d.getTime())) return 0;
+
+    const diffDays = Math.floor((now - d) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
 }
 
 function formatCurrency(amount) {
