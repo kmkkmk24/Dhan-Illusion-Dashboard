@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 SECTOR_INDICES = {
     "Nifty Auto": "14",
     "Nifty Bank": "25",
+    "Nifty Capital Markets": "803",
     "Nifty Commodities": "39",
     "Nifty Consumer Durables": "466",
     "Nifty Energy": "42",

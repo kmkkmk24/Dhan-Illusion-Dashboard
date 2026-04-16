@@ -26,6 +26,11 @@ SECTOR_CONSTITUENTS: dict[str, list[str]] = {
         "INDUSINDBK", "BANKBARODA", "PNB", "FEDERALBNK", "IDFCFIRSTB",
         "AUBANK", "BANDHANBNK",
     ],
+    "Nifty Capital Markets": [
+        "BSE", "HDFCAMC", "MCX", "NAM-INDIA", "MOTILALOFS",
+        "360ONE", "ANANDRATHI", "ABSLAMC", "CDSL", "ANGELONE",
+        "NUVAMA", "CAMS", "KFINTECH", "UTIAMC", "IEX",
+    ],
     "Nifty IT": [
         "TCS", "INFY", "HCLTECH", "WIPRO", "TECHM",
         "LTIM", "PERSISTENT", "COFORGE", "MPHASIS", "LTTS",
