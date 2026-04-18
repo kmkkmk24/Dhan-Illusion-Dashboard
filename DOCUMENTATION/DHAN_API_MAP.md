@@ -44,4 +44,4 @@ All requests are implemented in `backend/services/dhan_client.py`.
 | `GET api-scrip-master-detailed.csv` | `download_scrip_master` | Adv/Decl scrip master mapping (`backend/services/advdecl_intraday_scanner.py`) |
 
 ---
-If you want a module-by-module usage table or per‑feature mapping, tell me and I’ll add it here.
+If you want a module-by-module usage table or per-feature mapping, tell me and I’ll add it here.

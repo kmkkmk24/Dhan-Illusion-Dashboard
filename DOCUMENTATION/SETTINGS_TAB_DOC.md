@@ -1,4 +1,4 @@
-# Settings Tab — Step‑by‑Step
+# Settings Tab — Step-by-Step
 
 This document explains what happens in the **Settings** tab.
 
@@ -10,7 +10,7 @@ This document explains what happens in the **Settings** tab.
 
 **Backend**: `backend/api/settings.py`
 - Swing scan runs sector analysis then VCP scan (see Swing tab doc).
-- F&O scan runs sector‑first F&O scan or Adv/Decl based on setup.
+- F&O scan runs sector-first F&O scan or Adv/Decl based on setup.
 - Sector analysis only returns fresh sector rankings.
 
 ## 2) Instruments refresh / search
@@ -19,7 +19,7 @@ This document explains what happens in the **Settings** tab.
 - **GET** `/api/settings/instruments/search?q=...`
   - Finds instruments by symbol/name.
 - **GET** `/api/settings/instruments/fno`
-  - Returns list of F&O‑eligible stocks.
+  - Returns list of F&O-eligible stocks.
 
 ## 3) Scheduler controls
 - **GET** `/api/settings/scheduler/status`

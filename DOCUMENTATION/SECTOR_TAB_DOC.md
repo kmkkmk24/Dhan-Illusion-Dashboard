@@ -1,4 +1,4 @@
-# Sector Analysis Tab — Step‑by‑Step
+# Sector Analysis Tab — Step-by-Step
 
 This document explains what happens in the **Sector Analysis** tab from UI → API → data processing → UI updates.
 
@@ -41,11 +41,11 @@ This document explains what happens in the **Sector Analysis** tab from UI → A
 
 ### Price Action score
 Checks (each is 1/0; final score = average of the 5 checks):
-- Close above 20‑EMA
-- Close above 50‑EMA
+- Close above 20-EMA
+- Close above 50-EMA
 - Higher highs (last 20 vs prior 20)
 - Higher lows (last 20 vs prior 20)
-- EMA alignment (20‑EMA > 50‑EMA)
+- EMA alignment (20-EMA > 50-EMA)
 
 ### Final combined score
 - `combined_score = 0.5 * RS + 0.5 * PriceAction`
@@ -65,9 +65,9 @@ Each sector returns:
 - Score tooltip on hover shows full breakdown and formula.
 - Table is sortable with `applySortable('sectors-table')`.
 
-## 5) Clicking a sector (drill‑down)
+## 5) Clicking a sector (drill-down)
 **Frontend**: `expandSector(sectorName)`
-- Opens the right‑side drawer.
+- Opens the right-side drawer.
 - Fetches **GET** `/api/settings/sectors/{sector}/stocks`.
 - Renders stock list with signal badges if the stock has a signal.
 
@@ -106,7 +106,7 @@ sector:
 
 How each property is used:
 - `top_sectors`: used by `backend/api/settings.py` → `get_top_sector_scores()` to limit the number of sectors returned for “top sector” lists.
-- `rs_periods`: **not currently used in code** (RS periods are hard‑coded in `TIMEFRAME_PERIODS` inside `backend/services/sector_analyzer.py`).  
+- `rs_periods`: **not currently used in code** (RS periods are hard-coded in `TIMEFRAME_PERIODS` inside `backend/services/sector_analyzer.py`).  
   If you want, I can wire this field into the RS calculation.
 
 If the `sector` block is missing in `config.yaml`, the tab will rely on cached results (if any) but can error on fresh scans. Add the block to avoid that.
@@ -120,4 +120,3 @@ If the `sector` block is missing in `config.yaml`, the tab will rely on cached r
 - **GET** `/api/settings/sectors/{sector}/chart` → weekly chart data
 
 ---
-

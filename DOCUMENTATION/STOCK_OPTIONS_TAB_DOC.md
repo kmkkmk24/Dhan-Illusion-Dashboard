@@ -1,4 +1,4 @@
-# Stock Options (F&O) Tab — Step‑by‑Step
+# Stock Options (F&O) Tab — Step-by-Step
 
 This document explains the **Stock Options** tab flow (F&O scanning + option analysis + trade actions).
 
@@ -12,7 +12,7 @@ This document explains the **Stock Options** tab flow (F&O scanning + option ana
 - Returns signals filtered by `section=fno`.
 - Adds `is_fno` and `lot_size` from `Instrument`.
 
-## 2) Scan buttons (Core / Adv‑Decl)
+## 2) Scan buttons (Core / Adv-Decl)
 **Frontend**: `runFnoScanCore()` / `runFnoScanAdvDecl()`
 - Calls **POST** `/api/settings/scan/run?section=fno&setup=core` or `setup=advdecl`.
 - Status line shows summary and skips.
@@ -24,7 +24,7 @@ This document explains the **Stock Options** tab flow (F&O scanning + option ana
   3. Selects top sectors for CE and bottom sectors for PE.
   4. `FnoScanner.scan_fno()` scans those sectors.
 - **Adv/Decl** scan:
-  - Uses `AdvDeclIntradayScanner.scan()` for intraday breadth‑based setups.
+  - Uses `AdvDeclIntradayScanner.scan()` for intraday breadth-based setups.
 
 ## 3) Custom sector selection
 **Frontend**: Custom panel lets you pick CE/PE sectors manually.
@@ -46,7 +46,7 @@ This document explains the **Stock Options** tab flow (F&O scanning + option ana
 - **GET** `/api/signals/{signal_id}/live-advisory?strike=…&side=…&expiry=…`
 
 **Backend**: `backend/api/scanner.py`
-- Fetches real‑time option chain and evaluates HOLD / EXIT suggestions.
+- Fetches real-time option chain and evaluates HOLD / EXIT suggestions.
 
 ## 6) Trade actions
 **Frontend**:

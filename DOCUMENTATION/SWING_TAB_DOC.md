@@ -1,4 +1,4 @@
-# Swing Trades Tab — Step‑by‑Step
+# Swing Trades Tab — Step-by-Step
 
 This document explains what happens in the **Swing Trades** tab from UI → API → scan pipeline → UI updates.
 
@@ -6,8 +6,8 @@ This document explains what happens in the **Swing Trades** tab from UI → API 
 **Frontend**: `frontend/js/app.js`
 - `loadSignals('swing')` is called.
 - Fetches **GET** `/api/signals?section=swing`.
-- Renders the swing table, score tooltips, and last‑updated info.
-- Status/score filter pills apply client‑side filters (`loadSignals('swing', { statusFilters, scoreFilters })`).
+- Renders the swing table, score tooltips, and last-updated info.
+- Status/score filter pills apply client-side filters (`loadSignals('swing', { statusFilters, scoreFilters })`).
 
 **Backend**: `backend/api/scanner.py` → `list_signals()`
 - Reads `Signal` rows for `section = swing`.
@@ -20,7 +20,7 @@ This document explains what happens in the **Swing Trades** tab from UI → API 
 - On success, refreshes the swing list via `loadSignals('swing')`.
 
 **Backend**: `backend/api/settings.py` → `run_scan(section='swing')`
-The swing scan is a **VCP (Volatility Contraction Pattern)** pipeline with sector‑first prioritization:
+The swing scan is a **VCP (Volatility Contraction Pattern)** pipeline with sector-first prioritization:
 
 1. **Sector analysis**
    - Runs `SectorAnalyzer.analyze_sectors()` to get ranked sectors.
@@ -28,8 +28,8 @@ The swing scan is a **VCP (Volatility Contraction Pattern)** pipeline with secto
 
 2. **Universe selection**
    - Loads all NSE cash equities (`instrument_manager.get_nse_cash_equity_shares`).
-   - If `swing_universe.auto_rebuild_before_scan = true`, rebuilds `data/swing_universe_latest.csv` (liquidity‑filtered universe).
-   - If `vcp_scanner.swing_universe_csv` exists, restricts the scan to those security IDs (CSV‑based universe).
+   - If `swing_universe.auto_rebuild_before_scan = true`, rebuilds `data/swing_universe_latest.csv` (liquidity-filtered universe).
+   - If `vcp_scanner.swing_universe_csv` exists, restricts the scan to those security IDs (CSV-based universe).
 
 3. **VCP scan**
    - Calls `VCPScanner.scan_vcp_patterns(all_instruments, top_sectors)`.
@@ -41,7 +41,7 @@ The swing scan is a **VCP (Volatility Contraction Pattern)** pipeline with secto
 ## 3) What the Swing table shows
 Each row is a signal with:
 - Symbol + occurrence number (1st/2nd/3rd time)
-- Signal type (VCP / Hybrid‑VCP / Explosion, etc.)
+- Signal type (VCP / Hybrid-VCP / Explosion, etc.)
 - Score (combined from trend + contraction + volume + position)
 - Dates: first detected + last updated
 - Status (Active/Exploded/Invalidated/Dismissed)
@@ -64,7 +64,7 @@ sector:
   rs_periods: [5, 10, 20, 50]
 ```
 - `top_sectors`: number of top momentum sectors to prioritize in the swing scan.
-- `rs_periods`: currently **not used** in code; RS timeframes are hard‑coded in `sector_analyzer.py`.
+- `rs_periods`: currently **not used** in code; RS timeframes are hard-coded in `sector_analyzer.py`.
 
 ### 2) `swing_universe` (liquidity + universe rebuild)
 ```
@@ -90,7 +90,7 @@ swing_universe:
 - `min_daily_rows`: minimum candle count required.
 - `hist_min_interval` / `hist_chunk_pause`: throttling for Dhan historical calls.
 - `ltp_batch_pause_sec` / `ltp_batch_size`: pacing for LTP batch requests.
-- `max_after_ltp`: cap on post‑LTP trimming (0 = no cap).
+- `max_after_ltp`: cap on post-LTP trimming (0 = no cap).
 
 ### 3) `vcp_scanner` (core Swing scoring logic)
 ```
@@ -136,7 +136,7 @@ vcp_scanner:
 Key notes:
 - `swing_scan_mode`: `chartink` (default) or `minervini` logic.
 - `swing_universe_csv`: CSV used to restrict the universe (if present).
-- `chartink_*` fields: thresholds for the ChartInk‑style VCP screen.
+- `chartink_*` fields: thresholds for the ChartInk-style VCP screen.
 - `min_price`/`max_price`/`min_volume`: additional filters in the Minervini mode.
 - `contraction_*`, `volume_*`, `weight_*`: scoring logic for VCP quality.
 

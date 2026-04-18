@@ -1,4 +1,4 @@
-# Value Investing Tab — Step‑by‑Step
+# Value Investing Tab — Step-by-Step
 
 This document explains what happens in the **Value Investing** tab.
 
@@ -18,7 +18,7 @@ This document explains what happens in the **Value Investing** tab.
 **Backend**: `backend/services/value_investing_service.py`
 - Uses Tapetide (screener) to fetch candidates.
 - Enriches details from Tickertape + Moneycontrol.
-- Computes score, fair value range, mini‑DCF, and time‑to‑fair.
+- Computes score, fair value range, mini-DCF, and time-to-fair.
 
 ## 3) Detail panel
 **Frontend**: Clicking a row opens the detail drawer.

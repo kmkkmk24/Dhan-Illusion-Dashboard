@@ -1,4 +1,4 @@
-# Index Trading Tab — Step‑by‑Step
+# Index Trading Tab — Step-by-Step
 
 This document explains what happens in the **Index Trading** tab.
 
@@ -16,7 +16,7 @@ This document explains what happens in the **Index Trading** tab.
 - Calls **POST** `/api/index-trading/scan/run?mode=intraday|positional`.
 
 **Backend**: `backend/services/index_trading_scanner.py`
-- Intraday mode (15m): trend + mean‑reversion hybrid.
+- Intraday mode (15m): trend + mean-reversion hybrid.
 - Positional mode: daily EMA trend + breakout/pullback logic.
 - Strike selection uses option chain, then derives entry/exit/SL ranges.
 
@@ -25,7 +25,7 @@ This document explains what happens in the **Index Trading** tab.
 - Entry/exit/SL ranges are built using ATR buffers.
 - Converted to option premium ranges using delta.
 
-## 4) Tracking trades (HOLD / EARLY‑EXIT / SL / TARGET)
+## 4) Tracking trades (HOLD / EARLY-EXIT / SL / TARGET)
 **Frontend**: Track button
 - **POST** `/api/index-trading/track/{signal_id}`
 
@@ -122,4 +122,4 @@ index_trading:
 
 ---
 
-If you want, I can add a troubleshooting section (no‑signal days, skips, etc.).
+If you want, I can add a troubleshooting section (no-signal days, skips, etc.).

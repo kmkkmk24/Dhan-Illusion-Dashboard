@@ -1,4 +1,4 @@
-# Trade Journal Tab — Step‑by‑Step
+# Trade Journal Tab — Step-by-Step
 
 This document explains what happens in the **Trade Journal** tab.
 
@@ -24,7 +24,7 @@ This document explains what happens in the **Trade Journal** tab.
 
 **Backend**: `update_trade()`
 - Updates fields.
-- Auto‑computes P&L, P&L %, risk‑reward, and days held.
+- Auto-computes P&L, P&L %, risk-reward, and days held.
 
 ## 4) Deleting a trade
 **Frontend**: Delete button
