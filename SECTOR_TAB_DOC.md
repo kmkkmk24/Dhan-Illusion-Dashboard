@@ -121,4 +121,3 @@ If the `sector` block is missing in `config.yaml`, the tab will rely on cached r
 
 ---
 
-If you want this expanded with actual formulas or thresholds from `config.yaml`, tell me and I’ll add them.
