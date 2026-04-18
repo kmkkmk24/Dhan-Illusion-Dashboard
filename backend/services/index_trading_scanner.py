@@ -40,8 +40,30 @@ def _cache_scan_result(mode: str, signals: list[dict], summary: dict) -> dict:
     return payload
 
 
+def _reset_cache(mode: str) -> dict:
+    payload = _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    payload["as_of"] = None
+    payload["signals"] = []
+    payload["summary"] = {}
+    return payload
+
+
+def _is_cache_stale(payload: dict) -> bool:
+    as_of = payload.get("as_of")
+    if not as_of:
+        return False
+    try:
+        cached = datetime.fromisoformat(as_of)
+    except ValueError:
+        return False
+    return cached.date() != date.today()
+
+
 def get_index_scan_cache(mode: str = "intraday") -> dict:
-    return _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    payload = _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    if _is_cache_stale(payload):
+        return _reset_cache(mode)
+    return payload
 
 
 def _parse_time(s: str, fallback: time) -> time:
@@ -144,6 +166,11 @@ class IndexTradingScanner:
         self.target_atr_trend = float(cfg.get("target_atr_trend", 2.0))
         self.sl_atr_mean_revert = float(cfg.get("sl_atr_mean_revert", 0.8))
         self.target_atr_mean_revert = float(cfg.get("target_atr_mean_revert", 1.2))
+        self.sr_lookback_bars = int(cfg.get("sr_lookback_bars", 20))
+        self.sr_swing_window = int(cfg.get("sr_swing_window", 3))
+        self.entry_atr_buffer = float(cfg.get("entry_atr_buffer", 0.25))
+        self.exit_atr_buffer = float(cfg.get("exit_atr_buffer", 0.4))
+        self.sl_atr_buffer = float(cfg.get("sl_atr_buffer", 0.6))
 
         self.min_liquidity_oi = int(cfg.get("min_liquidity_oi", 100000))
         self.max_spread_pct = float(cfg.get("max_spread_pct", 5.0))
@@ -319,16 +346,56 @@ class IndexTradingScanner:
         sl_points, target_points = self._risk_points(atr_val, setup["setup_type"])
         spot = float(last["close"])
         if direction == "CE":
-            sl_price = round(spot - sl_points, 2)
-            target_price = round(spot + target_points, 2)
+            default_sl = spot - sl_points
+            default_target = spot + target_points
         else:
-            sl_price = round(spot + sl_points, 2)
-            target_price = round(spot - target_points, 2)
+            default_sl = spot + sl_points
+            default_target = spot - target_points
+
+        support, resistance = self._nearest_intraday_sr(df, spot)
+        support, resistance = self._fill_sr_from_confluence(
+            direction,
+            spot,
+            float(last["ema_fast"]),
+            float(last["vwap"]),
+            support,
+            resistance,
+        )
+
+        if direction == "CE":
+            entry_level = support if support is not None else spot
+            target_price = resistance if resistance is not None else default_target
+            sl_price = support - self.sl_atr_buffer * atr_val if support is not None else default_sl
+        else:
+            entry_level = resistance if resistance is not None else spot
+            target_price = support if support is not None else default_target
+            sl_price = resistance + self.sl_atr_buffer * atr_val if resistance is not None else default_sl
+
+        entry_low = entry_level - self.entry_atr_buffer * atr_val
+        entry_high = entry_level + self.entry_atr_buffer * atr_val
+        exit_low = target_price - self.exit_atr_buffer * atr_val
+        exit_high = target_price + self.exit_atr_buffer * atr_val
 
         premium = strike_pick["premium"]
         delta = abs(strike_pick.get("delta") or 0.45)
-        premium_target = round(premium + delta * abs(target_price - spot), 2)
-        premium_sl = round(max(0.1, premium - delta * abs(spot - sl_price)), 2)
+        premium_target = self._premium_from_spot_level(target_price, spot, premium, delta, direction)
+        premium_sl = self._premium_from_spot_level(sl_price, spot, premium, delta, direction)
+        entry_premium_low, entry_premium_high = self._premium_range_for_spot(
+            entry_low,
+            entry_high,
+            spot,
+            premium,
+            delta,
+            direction,
+        )
+        exit_premium_low, exit_premium_high = self._premium_range_for_spot(
+            exit_low,
+            exit_high,
+            spot,
+            premium,
+            delta,
+            direction,
+        )
 
         signal_payload = {
             "index": spec.name,
@@ -343,10 +410,14 @@ class IndexTradingScanner:
             "rsi": round(float(last["rsi"]), 1),
             "vwap": round(float(last["vwap"]), 2),
             "atr": round(float(atr_val), 2),
-            "sl_price": sl_price,
-            "target_price": target_price,
+            "sl_price": round(sl_price, 2),
+            "target_price": round(target_price, 2),
             "premium_target": premium_target,
             "premium_sl": premium_sl,
+            "entry_premium_low": entry_premium_low,
+            "entry_premium_high": entry_premium_high,
+            "exit_premium_low": exit_premium_low,
+            "exit_premium_high": exit_premium_high,
             "expiry": strike_pick["expiry"],
             "strike": strike_pick["strike"],
             "premium": premium,
@@ -675,6 +746,80 @@ class IndexTradingScanner:
             "near_fast_pct": round(abs(spot - ema_fast) / spot * 100, 3) if spot else 0,
             "near_mid_pct": round(abs(spot - ema_mid) / spot * 100, 3) if spot else 0,
         }
+
+    def _swing_levels(self, df: pd.DataFrame) -> tuple[list[float], list[float]]:
+        lookback = max(10, self.sr_lookback_bars)
+        window = max(1, self.sr_swing_window)
+        if len(df) < lookback + (window * 2 + 1):
+            return [], []
+
+        start = max(0, len(df) - lookback)
+        highs: list[float] = []
+        lows: list[float] = []
+        for idx in range(start + window, len(df) - window):
+            window_high = float(df["high"].iloc[idx - window: idx + window + 1].max())
+            window_low = float(df["low"].iloc[idx - window: idx + window + 1].min())
+            high = float(df["high"].iloc[idx])
+            low = float(df["low"].iloc[idx])
+            if high >= window_high:
+                highs.append(round(high, 2))
+            if low <= window_low:
+                lows.append(round(low, 2))
+
+        return sorted(set(lows)), sorted(set(highs))
+
+    def _nearest_intraday_sr(self, df: pd.DataFrame, spot: float) -> tuple[Optional[float], Optional[float]]:
+        lows, highs = self._swing_levels(df)
+        support = max((lvl for lvl in lows if lvl <= spot), default=None)
+        resistance = min((lvl for lvl in highs if lvl >= spot), default=None)
+        return support, resistance
+
+    def _fill_sr_from_confluence(
+        self,
+        direction: str,
+        spot: float,
+        ema_fast: float,
+        vwap: float,
+        support: Optional[float],
+        resistance: Optional[float],
+    ) -> tuple[Optional[float], Optional[float]]:
+        candidates = [level for level in (ema_fast, vwap) if level and not pd.isna(level)]
+        if direction == "CE" and support is None:
+            below = [level for level in candidates if level <= spot]
+            if below:
+                support = max(below)
+        if direction == "PE" and resistance is None:
+            above = [level for level in candidates if level >= spot]
+            if above:
+                resistance = min(above)
+        return support, resistance
+
+    def _premium_from_spot_level(
+        self,
+        level: float,
+        spot: float,
+        premium: float,
+        delta: float,
+        direction: str,
+    ) -> float:
+        sign = 1 if direction == "CE" else -1
+        value = premium + sign * delta * (level - spot)
+        return round(max(0.05, value), 2)
+
+    def _premium_range_for_spot(
+        self,
+        low_level: float,
+        high_level: float,
+        spot: float,
+        premium: float,
+        delta: float,
+        direction: str,
+    ) -> tuple[Optional[float], Optional[float]]:
+        if low_level is None or high_level is None:
+            return None, None
+        p1 = self._premium_from_spot_level(low_level, spot, premium, delta, direction)
+        p2 = self._premium_from_spot_level(high_level, spot, premium, delta, direction)
+        return (min(p1, p2), max(p1, p2))
 
     def _risk_points(self, atr_val: float, setup_type: str) -> tuple[float, float]:
         if setup_type == "mean_revert":

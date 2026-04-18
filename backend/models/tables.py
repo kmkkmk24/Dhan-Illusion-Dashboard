@@ -88,6 +88,24 @@ class Signal(Base):
     sector = Column(String(50))
     close_price_at_detection = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Trade tracking fields for index trading
+    is_tracked = Column(Boolean, default=False)
+    track_status = Column(String(20), default="NONE")  # NONE, HOLD, EARLY-EXIT, SL-HIT, TARGET-HIT
+    track_status_reason = Column(String(200))
+    track_entry_price = Column(Float)
+    track_target_price = Column(Float)
+    track_sl_price = Column(Float)
+    track_current_price = Column(Float)
+    track_last_updated = Column(DateTime)
+    track_option_security_id = Column(String(30))
+    track_expiry = Column(String(20))
+    track_direction = Column(String(5))
+    track_entry_oi = Column(Float)
+    track_entry_volume = Column(Float)
+    track_entry_spot = Column(Float)
+    track_support = Column(Float)
+    track_resistance = Column(Float)
 
     history = relationship("SignalHistory", back_populates="signal", cascade="all, delete-orphan")
     trades = relationship("Trade", back_populates="signal")

@@ -1705,6 +1705,7 @@ function switchFnoSubTab(mode, btn) {
 // --- Index Trading ---
 
 let _indexMode = 'intraday';
+let _trackingTimer = null;
 
 async function loadIndexSignals(mode = _indexMode) {
     _indexMode = mode;
@@ -1761,12 +1762,40 @@ async function runIndexScan(mode = _indexMode) {
 }
 
 function renderIndexSignals(data, mode = _indexMode) {
-    const ceTable = document.getElementById('index-ce-table');
-    const peTable = document.getElementById('index-pe-table');
-    if (!ceTable || !peTable) return;
+    const niftyTable = document.getElementById('index-nifty-table');
+    const sensexTable = document.getElementById('index-sensex-table');
+    if (!niftyTable || !sensexTable) return;
 
     const signals = data.signals || [];
     const fmt = n => new Intl.NumberFormat('en-IN').format(n);
+    const buyRangePct = 0.03;
+    const exitRangePct = 0.1;
+    const hasNumber = value => value !== null && value !== undefined && !Number.isNaN(Number(value));
+
+    const formatPrice = value => {
+        if (!hasNumber(value)) return '-';
+        return `₹${fmt(Math.round(Number(value)))}`;
+    };
+
+    const formatRange = (center, pct) => {
+        if (!hasNumber(center)) return '-';
+        const base = Number(center);
+        const low = Math.max(0.05, base * (1 - pct));
+        const high = base * (1 + pct);
+        return `₹${fmt(Math.round(low))}-₹${fmt(Math.round(high))}`;
+    };
+
+    const formatExplicitRange = (low, high) => {
+        if (!hasNumber(low) || !hasNumber(high)) return '-';
+        const minVal = Math.min(Number(low), Number(high));
+        const maxVal = Math.max(Number(low), Number(high));
+        return `₹${fmt(Math.round(minVal))}-₹${fmt(Math.round(maxVal))}`;
+    };
+
+    const formatLotValue = value => {
+        if (!hasNumber(value)) return '-';
+        return `₹${fmt(Math.round(Number(value)))}`;
+    };
 
     const formatExpiry = exp => {
         if (!exp) return '-';
@@ -1776,27 +1805,63 @@ function renderIndexSignals(data, mode = _indexMode) {
         return `${exp.slice(5)} (${diff >= 0 ? diff : 0}d)`;
     };
 
-    const renderTable = (rows, side) => {
+    const renderTable = (rows, label) => {
         if (!rows.length) {
-            return `<div class="p-6 text-center text-2xs" style="color:var(--text-muted)">No ${side} setups right now</div>`;
+            return `<div class="p-6 text-center text-2xs" style="color:var(--text-muted)">No ${label} setups right now</div>`;
         }
         const body = rows.map(r => {
             const click = r.signal_id ? `onclick="viewSignalDetail(${r.signal_id})"` : '';
-            const horizon = r.horizon ? r.horizon : ((r.setup_type || '').startsWith('positional') ? 'Positional' : 'Intraday');
-            const setupLabelRaw = r.setup_type === 'mean_revert' ? 'Mean Revert' : r.setup_type === 'positional_breakout' ? 'Breakout' : r.setup_type === 'positional_trend' ? 'Trend' : 'Trend';
-            const setupLabel = `${horizon} · ${setupLabelRaw}`;
-            const target = r.premium_target ? `₹${r.premium_target}` : '-';
-            const sl = r.premium_sl ? `₹${r.premium_sl}` : '-';
+            const strikeLabel = `${r.strike || '-'} ${r.direction || ''}`.trim();
+            const entryLow = hasNumber(r.entry_premium_low) ? Number(r.entry_premium_low) : (hasNumber(r.premium) ? Number(r.premium) * (1 - buyRangePct) : null);
+            const entryHigh = hasNumber(r.entry_premium_high) ? Number(r.entry_premium_high) : (hasNumber(r.premium) ? Number(r.premium) * (1 + buyRangePct) : null);
+            const exitLow = hasNumber(r.exit_premium_low) ? Number(r.exit_premium_low) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 - exitRangePct) : null);
+            const exitHigh = hasNumber(r.exit_premium_high) ? Number(r.exit_premium_high) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 + exitRangePct) : null);
+            const buyRange = hasNumber(entryLow) && hasNumber(entryHigh)
+                ? formatExplicitRange(entryLow, entryHigh)
+                : formatRange(r.premium, buyRangePct);
+            const exitRange = hasNumber(exitLow) && hasNumber(exitHigh)
+                ? formatExplicitRange(exitLow, exitHigh)
+                : formatRange(r.premium_target, exitRangePct);
+            const lotSize = hasNumber(r.lot_size) ? Number(r.lot_size) : null;
+            const totalAmount = hasNumber(entryHigh) && hasNumber(lotSize) ? entryHigh * lotSize : null;
+            const minProfit = hasNumber(exitLow) && hasNumber(entryHigh) && hasNumber(lotSize)
+                ? Math.max(0, (exitLow - entryHigh) * lotSize)
+                : null;
+            const maxLoss = hasNumber(r.premium_sl) && hasNumber(entryHigh) && hasNumber(lotSize)
+                ? Math.max(0, (entryHigh - Number(r.premium_sl)) * lotSize)
+                : null;
+            const isTracked = r.is_tracked || false;
+            const trackStatus = r.track_status || 'NONE';
+            const trackReason = r.track_status_reason || '';
+            const statusColor = trackStatus === 'HOLD' ? '#3b82f6' : trackStatus === 'EARLY-EXIT' ? '#f97316' : trackStatus === 'SL-HIT' ? '#ef4444' : trackStatus === 'TARGET-HIT' ? '#22c55e' : '#6b7280';
+            const statusBg = trackStatus === 'HOLD' ? 'rgba(59,130,246,0.1)' : trackStatus === 'EARLY-EXIT' ? 'rgba(249,115,22,0.1)' : trackStatus === 'SL-HIT' ? 'rgba(239,68,68,0.1)' : trackStatus === 'TARGET-HIT' ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)';
             return `
                 <tr class="cursor-pointer" ${click}>
                     <td>${r.index || '-'}</td>
-                    <td>${setupLabel}</td>
-                    <td>${Math.round((r.score || 0) * 100)}%</td>
-                    <td>${r.spot ? fmt(r.spot) : '-'}</td>
-                    <td>${r.strike || '-'} ${r.direction || ''}</td>
-                    <td>${r.premium ? '₹' + r.premium : '-'}</td>
-                    <td>${target} / ${sl}</td>
+                    <td>${strikeLabel}</td>
                     <td>${formatExpiry(r.expiry)}</td>
+                    <td>${buyRange}</td>
+                    <td>${exitRange}</td>
+                    <td>${formatPrice(r.premium_sl)}</td>
+                    <td>${formatLotValue(totalAmount)}</td>
+                    <td>${formatLotValue(minProfit)}</td>
+                    <td>${formatLotValue(maxLoss)}</td>
+                    <td>
+                        <button onclick="toggleTradeTracking(${r.signal_id || 0}, ${!isTracked}, ${JSON.stringify(r).replace(/"/g, '&quot;')})" 
+                                class="text-2xs px-2 py-1 rounded" 
+                                style="background:${isTracked ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)'};color:${isTracked ? '#22c55e' : '#6b7280'};border:1px solid ${isTracked ? '#22c55e' : '#6b7280'}">
+                            ${isTracked ? 'Tracking ✕' : 'Track'}
+                        </button>
+                    </td>
+                    <td title="${trackReason}">
+                        <div style="display:flex;flex-direction:column;gap:2px">
+                            <span class="text-2xs px-2 py-0.5 rounded font-medium" 
+                                  style="background:${statusBg};color:${statusColor}">
+                                ${trackStatus === 'NONE' ? '-' : trackStatus}
+                            </span>
+                            ${trackReason && trackStatus !== 'NONE' ? `<span style="font-size:0.5rem;color:var(--text-muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${trackReason}</span>` : ''}
+                        </div>
+                    </td>
                 </tr>
             `;
         }).join('');
@@ -1805,14 +1870,17 @@ function renderIndexSignals(data, mode = _indexMode) {
             <table class="data-table" style="font-size:0.6rem">
                 <thead>
                     <tr>
-                        <th>Index</th>
-                        <th>Setup</th>
-                        <th>Score</th>
-                        <th>Spot</th>
+                        <th>Script</th>
                         <th>Strike</th>
-                        <th>Premium</th>
-                        <th>T / SL</th>
                         <th>Expiry</th>
+                        <th>Premium Buy Range</th>
+                        <th>Premium Exit Range</th>
+                        <th>Premium SL</th>
+                        <th>Total Amount / Lot</th>
+                        <th>Min Profit / Lot</th>
+                        <th>Max Loss / Lot</th>
+                        <th>Action</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>${body}</tbody>
@@ -1820,12 +1888,92 @@ function renderIndexSignals(data, mode = _indexMode) {
         `;
     };
 
-    const ce = signals.filter(s => s.direction === 'CE');
-    const pe = signals.filter(s => s.direction === 'PE');
-    ceTable.innerHTML = renderTable(ce, 'CE');
-    peTable.innerHTML = renderTable(pe, 'PE');
-    applySortable('index-ce-table');
-    applySortable('index-pe-table');
+    const isSensex = name => /sensex/i.test(name || '');
+    const isNifty = name => /nifty/i.test(name || '');
+    const niftyRows = signals.filter(s => isNifty(s.index));
+    const sensexRows = signals.filter(s => isSensex(s.index));
+    const otherRows = signals.filter(s => !isNifty(s.index) && !isSensex(s.index));
+
+    niftyTable.innerHTML = renderTable(niftyRows.concat(otherRows), 'Nifty');
+    sensexTable.innerHTML = renderTable(sensexRows, 'Sensex');
+    applySortable('index-nifty-table');
+    applySortable('index-sensex-table');
+    
+    // Start tracking if any trades are being tracked
+    const hasTracked = signals.some(s => s.is_tracked);
+    if (hasTracked && !_trackingTimer) {
+        startTradeTracking();
+    }
+}
+
+async function toggleTradeTracking(signalId, enable, signalData) {
+    if (!signalId) return;
+    
+    let payload = { enable };
+    if (enable && signalData) {
+        // Pass trade parameters so backend can track properly
+        const r = typeof signalData === 'string' ? JSON.parse(signalData) : signalData;
+        payload = {
+            enable,
+            entry_price: r.entry_premium_high || r.premium || null,
+            target_price: r.exit_premium_high || r.premium_target || null,
+            sl_price: r.premium_sl || null,
+            option_security_id: r.option_security_id || null,
+            expiry: r.expiry || null,
+            direction: r.direction || null,
+            spot: r.spot || null,
+            support: r.sl_price || null,       // sl_price here is spot support level
+            resistance: r.target_price || null, // target_price here is spot resistance level
+            oi: r.oi || null,
+            volume: r.volume || null,
+        };
+    }
+    
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/track/${signalId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!resp.ok) throw new Error('Failed to update tracking');
+        
+        // Reload signals to show updated status
+        loadIndexSignals(_indexMode);
+        
+        if (enable) {
+            startTradeTracking();
+        }
+    } catch (e) {
+        console.error('Error toggling tracking:', e);
+    }
+}
+
+function startTradeTracking() {
+    if (_trackingTimer) return; // Already running
+    
+    _trackingTimer = setInterval(async () => {
+        try {
+            const resp = await fetch(`${API_BASE}/api/index-trading/update-tracking`, { method: 'POST' });
+            if (resp.ok) {
+                loadIndexSignals(_indexMode); // Refresh to show status updates
+                checkStopTracking(); // Stop if no more active trades
+            }
+        } catch (e) {
+            console.error('Error updating tracking:', e);
+        }
+    }, 2 * 60 * 1000); // 2 minutes
+}
+
+function checkStopTracking() {
+    // This will be called after loadIndexSignals, so we can check the current data
+    // For now, we'll let the timer run - it will be lightweight if no trades are tracked
+}
+
+function stopTradeTracking() {
+    if (_trackingTimer) {
+        clearInterval(_trackingTimer);
+        _trackingTimer = null;
+    }
 }
 
 // --- Value Investing ---
