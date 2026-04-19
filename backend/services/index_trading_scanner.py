@@ -127,6 +127,7 @@ class IndexSpec:
     exchange_segment: str
     instrument: str
     option_segment: str
+    option_quote_segment: str
     lot_size: int
 
 
@@ -177,6 +178,12 @@ class IndexTradingScanner:
         self.moneyness_limit_pct = float(cfg.get("moneyness_limit_pct", 2.0))
         self.min_option_premium = float(cfg.get("min_option_premium", 10.0))
         self.min_delta = float(cfg.get("min_delta", 0.25))
+        self.depth_filter_enabled = bool(cfg.get("depth_filter_enabled", True))
+        self.depth_max_spread_pct = float(cfg.get("depth_max_spread_pct", 3.0))
+        self.depth_min_top_qty = int(cfg.get("depth_min_top_qty", 100))
+        self.depth_min_total_qty = int(cfg.get("depth_min_total_qty", 500))
+        self.depth_min_imbalance = float(cfg.get("depth_min_imbalance", 0.0))
+        self.depth_require_data = bool(cfg.get("depth_require_data", False))
 
         self.max_signals_per_day = int(cfg.get("max_signals_per_day", 4))
 
@@ -221,6 +228,11 @@ class IndexTradingScanner:
                     exchange_segment=str(item.get("exchange_segment") or "IDX_I"),
                     instrument=str(item.get("instrument") or "INDEX"),
                     option_segment=str(item.get("option_segment") or "IDX_I"),
+                    option_quote_segment=str(
+                        item.get("option_quote_segment")
+                        or item.get("option_marketfeed_segment")
+                        or "NSE_FNO"
+                    ),
                     lot_size=int(item.get("lot_size") or 1),
                 )
             )
@@ -329,6 +341,7 @@ class IndexTradingScanner:
             client=client,
             security_id=spec.security_id,
             segment=spec.option_segment,
+            quote_segment=spec.option_quote_segment,
             direction=direction,
             spot_price=float(last["close"]),
             expiry_policy=self.expiry_policy,
@@ -468,6 +481,7 @@ class IndexTradingScanner:
             client=client,
             security_id=spec.security_id,
             segment=spec.option_segment,
+            quote_segment=spec.option_quote_segment,
             direction=direction,
             spot_price=float(last["close"]),
             expiry_policy=self.positional_expiry_policy,
@@ -832,6 +846,7 @@ class IndexTradingScanner:
         client: DhanClient,
         security_id: str,
         segment: str,
+        quote_segment: str,
         direction: str,
         spot_price: float,
         expiry_policy: str,
@@ -905,6 +920,21 @@ class IndexTradingScanner:
         if not strikes:
             return None
 
+        if self.depth_filter_enabled:
+            strikes = await self._filter_strikes_by_depth(
+                client,
+                strikes,
+                quote_segment,
+                direction,
+            )
+            if not strikes:
+                logger.info(
+                    "Index depth filter removed all strikes %s/%s",
+                    security_id,
+                    direction,
+                )
+                return None
+
         max_oi = max(s["oi"] for s in strikes) or 1
         max_vol = max(s["volume"] for s in strikes) or 1
         total_oi = sum(s["oi"] for s in strikes) or 1
@@ -957,6 +987,79 @@ class IndexTradingScanner:
         best["expiry"] = exp
         best["lot_size"] = int(lot_size or 1)
         return best
+
+    async def _filter_strikes_by_depth(
+        self,
+        client: DhanClient,
+        strikes: list[dict],
+        quote_segment: str,
+        direction: str,
+    ) -> list[dict]:
+        security_ids = [s["option_security_id"] for s in strikes if s.get("option_security_id")]
+        if not security_ids:
+            return strikes
+
+        quotes = await client.get_market_quote_quote(security_ids, quote_segment)
+        if not quotes or "data" not in quotes:
+            logger.warning("Market depth quote missing (%s)", quote_segment)
+            return strikes if not self.depth_require_data else []
+
+        segment_data = quotes.get("data", {}).get(quote_segment, {}) or {}
+        filtered: list[dict] = []
+        for strike in strikes:
+            sec_id = strike.get("option_security_id")
+            key = str(sec_id) if sec_id is not None else ""
+            quote = segment_data.get(key)
+            if quote is None and key.isdigit():
+                quote = segment_data.get(str(int(key)))
+            if not isinstance(quote, dict):
+                if self.depth_require_data:
+                    continue
+                filtered.append(strike)
+                continue
+
+            depth = quote.get("depth") or {}
+            buy_levels = depth.get("buy") or []
+            sell_levels = depth.get("sell") or []
+            top_bid = buy_levels[0] if buy_levels else {}
+            top_ask = sell_levels[0] if sell_levels else {}
+
+            bid_px = float(top_bid.get("price", 0) or 0)
+            ask_px = float(top_ask.get("price", 0) or 0)
+            top_bid_qty = int(top_bid.get("quantity", 0) or 0)
+            top_ask_qty = int(top_ask.get("quantity", 0) or 0)
+
+            spread_pct = 0.0
+            if bid_px and ask_px:
+                mid = (bid_px + ask_px) / 2
+                spread_pct = round((ask_px - bid_px) / mid * 100, 2) if mid else 0.0
+
+            buy_qty = int(quote.get("buy_quantity", 0) or 0)
+            sell_qty = int(quote.get("sell_quantity", 0) or 0)
+            total_qty = buy_qty + sell_qty
+            imbalance = (buy_qty - sell_qty) / total_qty if total_qty else 0.0
+
+            strike["depth_spread_pct"] = spread_pct
+            strike["depth_top_bid_qty"] = top_bid_qty
+            strike["depth_top_ask_qty"] = top_ask_qty
+            strike["depth_total_qty"] = total_qty
+            strike["depth_imbalance"] = round(imbalance, 3)
+
+            if spread_pct and spread_pct > self.depth_max_spread_pct:
+                continue
+            if top_bid_qty < self.depth_min_top_qty or top_ask_qty < self.depth_min_top_qty:
+                continue
+            if total_qty < self.depth_min_total_qty:
+                continue
+            if self.depth_min_imbalance > 0:
+                if direction == "CE" and imbalance < self.depth_min_imbalance:
+                    continue
+                if direction == "PE" and imbalance > -self.depth_min_imbalance:
+                    continue
+
+            filtered.append(strike)
+
+        return filtered
 
     def _select_expiry(self, expiries: list[str] | None, policy: str) -> Optional[str]:
         if not expiries:

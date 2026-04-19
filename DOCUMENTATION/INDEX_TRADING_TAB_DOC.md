@@ -86,6 +86,13 @@ index_trading:
   min_option_premium: 10.0
   min_delta: 0.25
 
+  depth_filter_enabled: true
+  depth_max_spread_pct: 3.0
+  depth_min_top_qty: 100
+  depth_min_total_qty: 500
+  depth_min_imbalance: 0.0
+  depth_require_data: false
+
   trade_start_time: "09:30"
   trade_end_time: "15:30"
   skip_open_minutes: 15
@@ -103,12 +110,14 @@ index_trading:
       exchange_segment: "IDX_I"
       instrument: "INDEX"
       option_segment: "IDX_I"
+      option_quote_segment: "NSE_FNO"
       lot_size: 65
     - name: "SENSEX"
       security_id: "51"
       exchange_segment: "IDX_I"
       instrument: "INDEX"
       option_segment: "IDX_I"
+      option_quote_segment: "BSE_FNO"
       lot_size: 20
 ```
 

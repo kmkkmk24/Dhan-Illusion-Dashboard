@@ -15,6 +15,7 @@ All requests are implemented in `backend/services/dhan_client.py`.
 | `POST /charts/intraday` | `get_intraday_data` | F&O scanner (`backend/services/fno_scanner.py`), Index intraday scan (`backend/services/index_trading_scanner.py`), Adv/Decl intraday (`backend/services/advdecl_intraday_scanner.py`), Trade tracker (`backend/services/trade_tracker.py`) |
 | `POST /marketfeed/ohlc` | `get_market_quote_ohlc` | Option analysis / advisory (`backend/api/scanner.py`), Adv/Decl intraday filters (`backend/services/advdecl_intraday_scanner.py`) |
 | `POST /marketfeed/ltp` | `get_market_quote_ltp` | Value Investing LTP (`backend/services/value_investing_service.py`), Swing universe builder (`backend/services/swing_universe_builder.py`), Option analysis / cost calc (`backend/api/scanner.py`), Trade tracker fallback (`backend/services/trade_tracker.py`) |
+| `POST /marketfeed/quote` | `get_market_quote_quote` | Index trading depth filter (`backend/services/index_trading_scanner.py`) |
 
 ## Derivatives Data
 | Endpoint | DhanClient method | Used in (features / modules) |
