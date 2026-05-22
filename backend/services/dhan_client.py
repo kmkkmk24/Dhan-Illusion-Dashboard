@@ -373,6 +373,59 @@ class DhanClient:
             logger.error(f"Error fetching market quotes: {e}")
             return None
 
+    async def get_market_quote_quote(
+        self,
+        security_ids: list[str],
+        exchange_segment: str,
+    ) -> Optional[dict]:
+        """Fetch market depth + OI + volume snapshot for up to 1000 instruments."""
+        client = await self._get_client()
+
+        int_ids = [int(sid) for sid in security_ids if str(sid).isdigit()]
+        if not int_ids:
+            return None
+        instruments = {exchange_segment: int_ids}
+        max_attempts = 4
+        backoff = 1.0
+        last_err: Optional[Exception] = None
+
+        for attempt in range(max_attempts):
+            try:
+                response = await client.post(
+                    "/marketfeed/quote",
+                    json=instruments,
+                )
+                if response.status_code == 429 and attempt < max_attempts - 1:
+                    ra = response.headers.get("Retry-After")
+                    try:
+                        sleep_s = float(ra) if ra else backoff
+                    except (TypeError, ValueError):
+                        sleep_s = backoff
+                    sleep_s = max(sleep_s, 0.5)
+                    logger.debug(
+                        "Dhan quote 429, sleep %.1fs (attempt %s/%s)",
+                        sleep_s,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(sleep_s)
+                    backoff = min(backoff * 2, 10)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 10)
+                    continue
+                logger.error(f"Error fetching market depth: {e}")
+                return None
+
+        if last_err:
+            logger.error(f"Error fetching market depth: {last_err}")
+        return None
+
     async def get_expiry_list(
         self,
         security_id: str,

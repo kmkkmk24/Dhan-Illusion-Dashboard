@@ -40,8 +40,30 @@ def _cache_scan_result(mode: str, signals: list[dict], summary: dict) -> dict:
     return payload
 
 
+def _reset_cache(mode: str) -> dict:
+    payload = _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    payload["as_of"] = None
+    payload["signals"] = []
+    payload["summary"] = {}
+    return payload
+
+
+def _is_cache_stale(payload: dict) -> bool:
+    as_of = payload.get("as_of")
+    if not as_of:
+        return False
+    try:
+        cached = datetime.fromisoformat(as_of)
+    except ValueError:
+        return False
+    return cached.date() != date.today()
+
+
 def get_index_scan_cache(mode: str = "intraday") -> dict:
-    return _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    payload = _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    if _is_cache_stale(payload):
+        return _reset_cache(mode)
+    return payload
 
 
 def _parse_time(s: str, fallback: time) -> time:
@@ -105,6 +127,7 @@ class IndexSpec:
     exchange_segment: str
     instrument: str
     option_segment: str
+    option_quote_segment: str
     lot_size: int
 
 
@@ -144,12 +167,23 @@ class IndexTradingScanner:
         self.target_atr_trend = float(cfg.get("target_atr_trend", 2.0))
         self.sl_atr_mean_revert = float(cfg.get("sl_atr_mean_revert", 0.8))
         self.target_atr_mean_revert = float(cfg.get("target_atr_mean_revert", 1.2))
+        self.sr_lookback_bars = int(cfg.get("sr_lookback_bars", 20))
+        self.sr_swing_window = int(cfg.get("sr_swing_window", 3))
+        self.entry_atr_buffer = float(cfg.get("entry_atr_buffer", 0.25))
+        self.exit_atr_buffer = float(cfg.get("exit_atr_buffer", 0.4))
+        self.sl_atr_buffer = float(cfg.get("sl_atr_buffer", 0.6))
 
         self.min_liquidity_oi = int(cfg.get("min_liquidity_oi", 100000))
         self.max_spread_pct = float(cfg.get("max_spread_pct", 5.0))
         self.moneyness_limit_pct = float(cfg.get("moneyness_limit_pct", 2.0))
         self.min_option_premium = float(cfg.get("min_option_premium", 10.0))
         self.min_delta = float(cfg.get("min_delta", 0.25))
+        self.depth_filter_enabled = bool(cfg.get("depth_filter_enabled", True))
+        self.depth_max_spread_pct = float(cfg.get("depth_max_spread_pct", 3.0))
+        self.depth_min_top_qty = int(cfg.get("depth_min_top_qty", 100))
+        self.depth_min_total_qty = int(cfg.get("depth_min_total_qty", 500))
+        self.depth_min_imbalance = float(cfg.get("depth_min_imbalance", 0.0))
+        self.depth_require_data = bool(cfg.get("depth_require_data", False))
 
         self.max_signals_per_day = int(cfg.get("max_signals_per_day", 4))
 
@@ -194,6 +228,11 @@ class IndexTradingScanner:
                     exchange_segment=str(item.get("exchange_segment") or "IDX_I"),
                     instrument=str(item.get("instrument") or "INDEX"),
                     option_segment=str(item.get("option_segment") or "IDX_I"),
+                    option_quote_segment=str(
+                        item.get("option_quote_segment")
+                        or item.get("option_marketfeed_segment")
+                        or "NSE_FNO"
+                    ),
                     lot_size=int(item.get("lot_size") or 1),
                 )
             )
@@ -302,6 +341,7 @@ class IndexTradingScanner:
             client=client,
             security_id=spec.security_id,
             segment=spec.option_segment,
+            quote_segment=spec.option_quote_segment,
             direction=direction,
             spot_price=float(last["close"]),
             expiry_policy=self.expiry_policy,
@@ -319,16 +359,56 @@ class IndexTradingScanner:
         sl_points, target_points = self._risk_points(atr_val, setup["setup_type"])
         spot = float(last["close"])
         if direction == "CE":
-            sl_price = round(spot - sl_points, 2)
-            target_price = round(spot + target_points, 2)
+            default_sl = spot - sl_points
+            default_target = spot + target_points
         else:
-            sl_price = round(spot + sl_points, 2)
-            target_price = round(spot - target_points, 2)
+            default_sl = spot + sl_points
+            default_target = spot - target_points
+
+        support, resistance = self._nearest_intraday_sr(df, spot)
+        support, resistance = self._fill_sr_from_confluence(
+            direction,
+            spot,
+            float(last["ema_fast"]),
+            float(last["vwap"]),
+            support,
+            resistance,
+        )
+
+        if direction == "CE":
+            entry_level = support if support is not None else spot
+            target_price = resistance if resistance is not None else default_target
+            sl_price = support - self.sl_atr_buffer * atr_val if support is not None else default_sl
+        else:
+            entry_level = resistance if resistance is not None else spot
+            target_price = support if support is not None else default_target
+            sl_price = resistance + self.sl_atr_buffer * atr_val if resistance is not None else default_sl
+
+        entry_low = entry_level - self.entry_atr_buffer * atr_val
+        entry_high = entry_level + self.entry_atr_buffer * atr_val
+        exit_low = target_price - self.exit_atr_buffer * atr_val
+        exit_high = target_price + self.exit_atr_buffer * atr_val
 
         premium = strike_pick["premium"]
         delta = abs(strike_pick.get("delta") or 0.45)
-        premium_target = round(premium + delta * abs(target_price - spot), 2)
-        premium_sl = round(max(0.1, premium - delta * abs(spot - sl_price)), 2)
+        premium_target = self._premium_from_spot_level(target_price, spot, premium, delta, direction)
+        premium_sl = self._premium_from_spot_level(sl_price, spot, premium, delta, direction)
+        entry_premium_low, entry_premium_high = self._premium_range_for_spot(
+            entry_low,
+            entry_high,
+            spot,
+            premium,
+            delta,
+            direction,
+        )
+        exit_premium_low, exit_premium_high = self._premium_range_for_spot(
+            exit_low,
+            exit_high,
+            spot,
+            premium,
+            delta,
+            direction,
+        )
 
         signal_payload = {
             "index": spec.name,
@@ -343,10 +423,14 @@ class IndexTradingScanner:
             "rsi": round(float(last["rsi"]), 1),
             "vwap": round(float(last["vwap"]), 2),
             "atr": round(float(atr_val), 2),
-            "sl_price": sl_price,
-            "target_price": target_price,
+            "sl_price": round(sl_price, 2),
+            "target_price": round(target_price, 2),
             "premium_target": premium_target,
             "premium_sl": premium_sl,
+            "entry_premium_low": entry_premium_low,
+            "entry_premium_high": entry_premium_high,
+            "exit_premium_low": exit_premium_low,
+            "exit_premium_high": exit_premium_high,
             "expiry": strike_pick["expiry"],
             "strike": strike_pick["strike"],
             "premium": premium,
@@ -397,6 +481,7 @@ class IndexTradingScanner:
             client=client,
             security_id=spec.security_id,
             segment=spec.option_segment,
+            quote_segment=spec.option_quote_segment,
             direction=direction,
             spot_price=float(last["close"]),
             expiry_policy=self.positional_expiry_policy,
@@ -676,6 +761,80 @@ class IndexTradingScanner:
             "near_mid_pct": round(abs(spot - ema_mid) / spot * 100, 3) if spot else 0,
         }
 
+    def _swing_levels(self, df: pd.DataFrame) -> tuple[list[float], list[float]]:
+        lookback = max(10, self.sr_lookback_bars)
+        window = max(1, self.sr_swing_window)
+        if len(df) < lookback + (window * 2 + 1):
+            return [], []
+
+        start = max(0, len(df) - lookback)
+        highs: list[float] = []
+        lows: list[float] = []
+        for idx in range(start + window, len(df) - window):
+            window_high = float(df["high"].iloc[idx - window: idx + window + 1].max())
+            window_low = float(df["low"].iloc[idx - window: idx + window + 1].min())
+            high = float(df["high"].iloc[idx])
+            low = float(df["low"].iloc[idx])
+            if high >= window_high:
+                highs.append(round(high, 2))
+            if low <= window_low:
+                lows.append(round(low, 2))
+
+        return sorted(set(lows)), sorted(set(highs))
+
+    def _nearest_intraday_sr(self, df: pd.DataFrame, spot: float) -> tuple[Optional[float], Optional[float]]:
+        lows, highs = self._swing_levels(df)
+        support = max((lvl for lvl in lows if lvl <= spot), default=None)
+        resistance = min((lvl for lvl in highs if lvl >= spot), default=None)
+        return support, resistance
+
+    def _fill_sr_from_confluence(
+        self,
+        direction: str,
+        spot: float,
+        ema_fast: float,
+        vwap: float,
+        support: Optional[float],
+        resistance: Optional[float],
+    ) -> tuple[Optional[float], Optional[float]]:
+        candidates = [level for level in (ema_fast, vwap) if level and not pd.isna(level)]
+        if direction == "CE" and support is None:
+            below = [level for level in candidates if level <= spot]
+            if below:
+                support = max(below)
+        if direction == "PE" and resistance is None:
+            above = [level for level in candidates if level >= spot]
+            if above:
+                resistance = min(above)
+        return support, resistance
+
+    def _premium_from_spot_level(
+        self,
+        level: float,
+        spot: float,
+        premium: float,
+        delta: float,
+        direction: str,
+    ) -> float:
+        sign = 1 if direction == "CE" else -1
+        value = premium + sign * delta * (level - spot)
+        return round(max(0.05, value), 2)
+
+    def _premium_range_for_spot(
+        self,
+        low_level: float,
+        high_level: float,
+        spot: float,
+        premium: float,
+        delta: float,
+        direction: str,
+    ) -> tuple[Optional[float], Optional[float]]:
+        if low_level is None or high_level is None:
+            return None, None
+        p1 = self._premium_from_spot_level(low_level, spot, premium, delta, direction)
+        p2 = self._premium_from_spot_level(high_level, spot, premium, delta, direction)
+        return (min(p1, p2), max(p1, p2))
+
     def _risk_points(self, atr_val: float, setup_type: str) -> tuple[float, float]:
         if setup_type == "mean_revert":
             return self.sl_atr_mean_revert * atr_val, self.target_atr_mean_revert * atr_val
@@ -687,6 +846,7 @@ class IndexTradingScanner:
         client: DhanClient,
         security_id: str,
         segment: str,
+        quote_segment: str,
         direction: str,
         spot_price: float,
         expiry_policy: str,
@@ -760,6 +920,21 @@ class IndexTradingScanner:
         if not strikes:
             return None
 
+        if self.depth_filter_enabled:
+            strikes = await self._filter_strikes_by_depth(
+                client,
+                strikes,
+                quote_segment,
+                direction,
+            )
+            if not strikes:
+                logger.info(
+                    "Index depth filter removed all strikes %s/%s",
+                    security_id,
+                    direction,
+                )
+                return None
+
         max_oi = max(s["oi"] for s in strikes) or 1
         max_vol = max(s["volume"] for s in strikes) or 1
         total_oi = sum(s["oi"] for s in strikes) or 1
@@ -812,6 +987,79 @@ class IndexTradingScanner:
         best["expiry"] = exp
         best["lot_size"] = int(lot_size or 1)
         return best
+
+    async def _filter_strikes_by_depth(
+        self,
+        client: DhanClient,
+        strikes: list[dict],
+        quote_segment: str,
+        direction: str,
+    ) -> list[dict]:
+        security_ids = [s["option_security_id"] for s in strikes if s.get("option_security_id")]
+        if not security_ids:
+            return strikes
+
+        quotes = await client.get_market_quote_quote(security_ids, quote_segment)
+        if not quotes or "data" not in quotes:
+            logger.warning("Market depth quote missing (%s)", quote_segment)
+            return strikes if not self.depth_require_data else []
+
+        segment_data = quotes.get("data", {}).get(quote_segment, {}) or {}
+        filtered: list[dict] = []
+        for strike in strikes:
+            sec_id = strike.get("option_security_id")
+            key = str(sec_id) if sec_id is not None else ""
+            quote = segment_data.get(key)
+            if quote is None and key.isdigit():
+                quote = segment_data.get(str(int(key)))
+            if not isinstance(quote, dict):
+                if self.depth_require_data:
+                    continue
+                filtered.append(strike)
+                continue
+
+            depth = quote.get("depth") or {}
+            buy_levels = depth.get("buy") or []
+            sell_levels = depth.get("sell") or []
+            top_bid = buy_levels[0] if buy_levels else {}
+            top_ask = sell_levels[0] if sell_levels else {}
+
+            bid_px = float(top_bid.get("price", 0) or 0)
+            ask_px = float(top_ask.get("price", 0) or 0)
+            top_bid_qty = int(top_bid.get("quantity", 0) or 0)
+            top_ask_qty = int(top_ask.get("quantity", 0) or 0)
+
+            spread_pct = 0.0
+            if bid_px and ask_px:
+                mid = (bid_px + ask_px) / 2
+                spread_pct = round((ask_px - bid_px) / mid * 100, 2) if mid else 0.0
+
+            buy_qty = int(quote.get("buy_quantity", 0) or 0)
+            sell_qty = int(quote.get("sell_quantity", 0) or 0)
+            total_qty = buy_qty + sell_qty
+            imbalance = (buy_qty - sell_qty) / total_qty if total_qty else 0.0
+
+            strike["depth_spread_pct"] = spread_pct
+            strike["depth_top_bid_qty"] = top_bid_qty
+            strike["depth_top_ask_qty"] = top_ask_qty
+            strike["depth_total_qty"] = total_qty
+            strike["depth_imbalance"] = round(imbalance, 3)
+
+            if spread_pct and spread_pct > self.depth_max_spread_pct:
+                continue
+            if top_bid_qty < self.depth_min_top_qty or top_ask_qty < self.depth_min_top_qty:
+                continue
+            if total_qty < self.depth_min_total_qty:
+                continue
+            if self.depth_min_imbalance > 0:
+                if direction == "CE" and imbalance < self.depth_min_imbalance:
+                    continue
+                if direction == "PE" and imbalance > -self.depth_min_imbalance:
+                    continue
+
+            filtered.append(strike)
+
+        return filtered
 
     def _select_expiry(self, expiries: list[str] | None, policy: str) -> Optional[str]:
         if not expiries:

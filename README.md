@@ -106,8 +106,19 @@ dhan/
 │   └── config.py      # Configuration management
 ├── frontend/          # Web UI (HTML/CSS/JS)
 ├── data/             # Database & backups
-└── docs/             # Documentation
+└── DOCUMENTATION/    # Markdown docs
 ```
+
+## 📚 Documentation
+
+- [Dhan API Usage Map](DOCUMENTATION/DHAN_API_MAP.md)
+- [Sector Analysis Tab](DOCUMENTATION/SECTOR_TAB_DOC.md)
+- [Swing Trades Tab](DOCUMENTATION/SWING_TAB_DOC.md)
+- [Stock Options Tab](DOCUMENTATION/STOCK_OPTIONS_TAB_DOC.md)
+- [Index Trading Tab](DOCUMENTATION/INDEX_TRADING_TAB_DOC.md)
+- [Value Investing Tab](DOCUMENTATION/VALUE_INVESTING_TAB_DOC.md)
+- [Trade Journal Tab](DOCUMENTATION/TRADE_JOURNAL_TAB_DOC.md)
+- [Settings Tab](DOCUMENTATION/SETTINGS_TAB_DOC.md)
 
 ## 🔄 Token Management
 
