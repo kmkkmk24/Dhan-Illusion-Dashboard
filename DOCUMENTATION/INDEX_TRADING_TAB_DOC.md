@@ -64,9 +64,16 @@ index_trading:
   allow_mean_revert_without_candle: true
   mean_revert_candle_override_rsi: 30
   mean_revert_candle_override_rsi_high: 70
+  mean_revert_two_bar_confirm: true
+  mean_revert_min_atr_overshoot: 1.2
+  mean_revert_max_slope_pct: 0.0006
   allow_trend_continuation: true
   trend_rsi_min: 55
   trend_rsi_max: 45
+  trend_setup_rsi_min: 52
+  trend_setup_rsi_max: 48
+  trend_require_vwap_reclaim: true
+  trend_min_slope_pct: 0.0004
 
   atr_period: 14
   sl_atr_trend: 1.0
