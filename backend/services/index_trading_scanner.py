@@ -161,6 +161,13 @@ class IndexTradingScanner:
         self.allow_trend_continuation = bool(cfg.get("allow_trend_continuation", True))
         self.trend_rsi_min = float(cfg.get("trend_rsi_min", 55))
         self.trend_rsi_max = float(cfg.get("trend_rsi_max", 45))
+        self.trend_setup_rsi_min = float(cfg.get("trend_setup_rsi_min", 52))
+        self.trend_setup_rsi_max = float(cfg.get("trend_setup_rsi_max", 48))
+        self.trend_require_vwap_reclaim = bool(cfg.get("trend_require_vwap_reclaim", True))
+        self.trend_min_slope_pct = float(cfg.get("trend_min_slope_pct", 0.0004))
+        self.mean_revert_two_bar_confirm = bool(cfg.get("mean_revert_two_bar_confirm", True))
+        self.mean_revert_min_atr_overshoot = float(cfg.get("mean_revert_min_atr_overshoot", 1.2))
+        self.mean_revert_max_slope_pct = float(cfg.get("mean_revert_max_slope_pct", 0.0006))
 
         self.atr_period = int(cfg.get("atr_period", 14))
         self.sl_atr_trend = float(cfg.get("sl_atr_trend", 1.0))
@@ -585,11 +592,13 @@ class IndexTradingScanner:
 
     def _detect_setup(self, df: pd.DataFrame, trend: dict) -> Optional[dict]:
         last = _last_trade_row(df)
+        prev = df.iloc[-2] if len(df) > 1 else last
 
         spot = float(last["close"])
         ema_fast = float(last["ema_fast"])
         vwap = float(last["vwap"])
         rsi = float(last["rsi"])
+        atr_val = float(last.get("atr", 0) or 0)
 
         candle_bull = last["close"] > last["open"]
         candle_bear = last["close"] < last["open"]
@@ -600,6 +609,11 @@ class IndexTradingScanner:
         bearish_reject = wick_down >= self.reversal_wick_pct
         bullish_ok = candle_bull or bullish_reject
         bearish_ok = candle_bear or bearish_reject
+        prev_range = max(1e-9, float(prev["high"]) - float(prev["low"]))
+        prev_wick_up = (float(prev["close"]) - float(prev["low"])) / prev_range
+        prev_wick_down = (float(prev["high"]) - float(prev["close"])) / prev_range
+        prev_bullish_reject = prev_wick_up >= self.reversal_wick_pct
+        prev_bearish_reject = prev_wick_down >= self.reversal_wick_pct
 
         trend_dir = trend["direction"]
         ema_gap_pct = trend["ema_gap_pct"]
@@ -607,23 +621,42 @@ class IndexTradingScanner:
 
         near_ema = abs(spot - ema_fast) / spot <= self.pullback_pct if spot else False
         near_vwap = abs(spot - vwap) / spot <= self.vwap_pullback_pct if spot else False
+        vwap_reclaim_ok = True
+        if self.trend_require_vwap_reclaim:
+            vwap_reclaim_ok = spot >= vwap if trend_dir == "CE" else spot <= vwap
 
-        if trend_dir == "CE" and (near_ema or near_vwap) and bullish_ok:
-            return {"setup_type": "trend", "direction": "CE", "score": 0.7 + min(0.3, ema_gap_pct * 10)}
-        if trend_dir == "PE" and (near_ema or near_vwap) and bearish_ok:
-            return {"setup_type": "trend", "direction": "PE", "score": 0.7 + min(0.3, ema_gap_pct * 10)}
+        trend_slope_ok = (
+            slope >= self.trend_min_slope_pct if trend_dir == "CE" else slope <= -self.trend_min_slope_pct
+        )
+        if trend_dir == "CE" and (near_ema or near_vwap) and bullish_ok and vwap_reclaim_ok:
+            if trend_slope_ok and rsi >= self.trend_setup_rsi_min:
+                return {"setup_type": "trend", "direction": "CE", "score": 0.7 + min(0.3, ema_gap_pct * 10)}
+        if trend_dir == "PE" and (near_ema or near_vwap) and bearish_ok and vwap_reclaim_ok:
+            if trend_slope_ok and rsi <= self.trend_setup_rsi_max:
+                return {"setup_type": "trend", "direction": "PE", "score": 0.7 + min(0.3, ema_gap_pct * 10)}
 
         flat = ema_gap_pct <= self.flat_trend_pct and abs(slope) <= self.flat_slope_pct
-        if flat or self.mean_revert_allow_trend:
+        trend_strength_ok = abs(slope) <= self.mean_revert_max_slope_pct
+        if (flat or self.mean_revert_allow_trend) and trend_strength_ok:
             dev_pct = (spot - vwap) / vwap if vwap else 0
-            if self.allow_mean_revert_without_candle and rsi <= self.mean_revert_candle_override_rsi:
-                bullish_ok = True
-            if self.allow_mean_revert_without_candle and rsi >= self.mean_revert_candle_override_rsi_high:
-                bearish_ok = True
+            overshoot_atr = abs(spot - vwap) / atr_val if atr_val > 0 else 0
+            overshoot_ok = overshoot_atr >= self.mean_revert_min_atr_overshoot
+            override_bull = self.allow_mean_revert_without_candle and rsi <= self.mean_revert_candle_override_rsi
+            override_bear = self.allow_mean_revert_without_candle and rsi >= self.mean_revert_candle_override_rsi_high
+            bull_confirm = (
+                (self.mean_revert_two_bar_confirm and bullish_reject and prev_bullish_reject)
+                or (not self.mean_revert_two_bar_confirm and bullish_ok)
+                or override_bull
+            )
+            bear_confirm = (
+                (self.mean_revert_two_bar_confirm and bearish_reject and prev_bearish_reject)
+                or (not self.mean_revert_two_bar_confirm and bearish_ok)
+                or override_bear
+            )
 
-            if dev_pct <= -self.vwap_dev_pct and rsi <= self.rsi_oversold and bullish_ok:
+            if dev_pct <= -self.vwap_dev_pct and rsi <= self.rsi_oversold and bull_confirm and overshoot_ok:
                 return {"setup_type": "mean_revert", "direction": "CE", "score": 0.6 + min(0.4, abs(dev_pct) * 20)}
-            if dev_pct >= self.vwap_dev_pct and rsi >= self.rsi_overbought and bearish_ok:
+            if dev_pct >= self.vwap_dev_pct and rsi >= self.rsi_overbought and bear_confirm and overshoot_ok:
                 return {"setup_type": "mean_revert", "direction": "PE", "score": 0.6 + min(0.4, abs(dev_pct) * 20)}
 
         if self.allow_trend_continuation:
@@ -643,10 +676,12 @@ class IndexTradingScanner:
         ema_slow = float(last["ema_slow"])
         vwap = float(last["vwap"])
         rsi = float(last["rsi"])
+        atr_val = float(last.get("atr", 0) or 0)
 
         near_ema = abs(spot - ema_fast) / spot if spot else 0
         near_vwap = abs(spot - vwap) / spot if spot else 0
         dev_vwap = (spot - vwap) / vwap if vwap else 0
+        overshoot_atr = abs(spot - vwap) / atr_val if atr_val > 0 else 0
         candle_bull = last["close"] > last["open"]
         candle_bear = last["close"] < last["open"]
 
@@ -656,12 +691,14 @@ class IndexTradingScanner:
             "ema_slow": round(ema_slow, 2),
             "vwap": round(vwap, 2),
             "rsi": round(rsi, 1),
+            "atr": round(atr_val, 2),
             "trend_dir": trend.get("direction"),
             "ema_gap_pct": round(trend.get("ema_gap_pct", 0) * 100, 3),
             "slope": round(trend.get("slope", 0) * 100, 3),
             "near_ema_pct": round(near_ema * 100, 3),
             "near_vwap_pct": round(near_vwap * 100, 3),
             "vwap_dev_pct": round(dev_vwap * 100, 3),
+            "vwap_dev_atr": round(overshoot_atr, 2),
             "candle": "bull" if candle_bull else "bear" if candle_bear else "flat",
             "volume": float(last.get("volume", 0) or 0),
         }
