@@ -131,6 +131,100 @@ function isDark() {
     return document.documentElement.getAttribute('data-theme') === 'dark';
 }
 
+// --- Daily P&L Guard (Dhan pnlExit) ---
+
+function _setPnlGuardStatus(msg, isError = false) {
+    const el = document.getElementById('pnl-guard-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = isError ? '#ef4444' : 'var(--text-muted)';
+}
+
+async function loadPnlGuardStatus() {
+    const profitInput = document.getElementById('pnl-max-profit');
+    const lossInput = document.getElementById('pnl-max-loss');
+    if (!profitInput || !lossInput) return;
+    _setPnlGuardStatus('Checking status...');
+    try {
+        const resp = await fetch(`${API_BASE}/api/settings/pnl-exit`);
+        const result = await resp.json();
+        if (!result?.success) {
+            _setPnlGuardStatus(result?.message || 'Not configured');
+            return;
+        }
+
+        const data = result.data || {};
+        const status = String(data.pnlExitStatus || data.status || '').toUpperCase();
+        const profit = data.profit ?? data.profitValue ?? '';
+        const loss = data.loss ?? data.lossValue ?? '';
+        if (profit !== '' && profit !== null && profit !== undefined) profitInput.value = Number(profit);
+        if (loss !== '' && loss !== null && loss !== undefined) lossInput.value = Math.abs(Number(loss));
+
+        // Dhan returns PENDING before it moves to ACTIVE; both should be treated
+        // as configured for UI clarity.
+        if (status === 'ACTIVE' || status === 'PENDING') {
+            const profitLabel = (profit !== '' && profit !== null && profit !== undefined) ? Number(profit) : '-';
+            const lossLabel = (loss !== '' && loss !== null && loss !== undefined) ? Math.abs(Number(loss)) : '-';
+            _setPnlGuardStatus(`${status} · Profit ${profitLabel} · Loss ${lossLabel}`);
+        } else {
+            _setPnlGuardStatus('Inactive');
+        }
+    } catch (e) {
+        _setPnlGuardStatus(`Status error: ${e.message}`, true);
+    }
+}
+
+async function savePnlGuard() {
+    const profitInput = document.getElementById('pnl-max-profit');
+    const lossInput = document.getElementById('pnl-max-loss');
+    if (!profitInput || !lossInput) return;
+
+    const maxProfit = profitInput.value ? Number(profitInput.value) : null;
+    const maxLoss = lossInput.value ? Number(lossInput.value) : null;
+    if (maxProfit === null && maxLoss === null) {
+        _setPnlGuardStatus('Enter max profit or max loss first', true);
+        return;
+    }
+
+    _setPnlGuardStatus('Applying...');
+    try {
+        const resp = await fetch(`${API_BASE}/api/settings/pnl-exit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                max_profit: maxProfit,
+                max_loss: maxLoss,
+                product_type: ['INTRADAY', 'DELIVERY'],
+                enable_kill_switch: false,
+            }),
+        });
+        const result = await resp.json();
+        if (!result?.success) {
+            _setPnlGuardStatus(result?.message || 'Failed to apply', true);
+            return;
+        }
+        _setPnlGuardStatus('Applied successfully');
+        await loadPnlGuardStatus();
+    } catch (e) {
+        _setPnlGuardStatus(`Apply error: ${e.message}`, true);
+    }
+}
+
+async function disablePnlGuard() {
+    _setPnlGuardStatus('Disabling...');
+    try {
+        const resp = await fetch(`${API_BASE}/api/settings/pnl-exit`, { method: 'DELETE' });
+        const result = await resp.json();
+        if (!result?.success) {
+            _setPnlGuardStatus(result?.message || 'Failed to disable', true);
+            return;
+        }
+        _setPnlGuardStatus('Disabled');
+    } catch (e) {
+        _setPnlGuardStatus(`Disable error: ${e.message}`, true);
+    }
+}
+
 // --- Tab Switching ---
 
 function switchTab(tab) {
@@ -1705,7 +1799,19 @@ function switchFnoSubTab(mode, btn) {
 // --- Index Trading ---
 
 let _indexMode = 'intraday';
+let _indexSubTab = 'nifty';
 let _trackingTimer = null;
+
+function switchIndexSubTab(mode, btn) {
+    _indexSubTab = mode === 'sensex' ? 'sensex' : 'nifty';
+    const niftyPanel = document.getElementById('index-panel-nifty');
+    const sensexPanel = document.getElementById('index-panel-sensex');
+    if (niftyPanel) niftyPanel.classList.toggle('hidden', _indexSubTab !== 'nifty');
+    if (sensexPanel) sensexPanel.classList.toggle('hidden', _indexSubTab !== 'sensex');
+
+    const pills = document.querySelectorAll('#index-subtab .filter-pill');
+    pills.forEach(p => p.classList.toggle('active', p.dataset.value === _indexSubTab));
+}
 
 async function loadIndexSignals(mode = _indexMode) {
     _indexMode = mode;
@@ -1898,6 +2004,7 @@ function renderIndexSignals(data, mode = _indexMode) {
     sensexTable.innerHTML = renderTable(sensexRows, 'Sensex');
     applySortable('index-nifty-table');
     applySortable('index-sensex-table');
+    switchIndexSubTab(_indexSubTab);
     
     // Start tracking if any trades are being tracked
     const hasTracked = signals.some(s => s.is_tracked);
@@ -3506,6 +3613,7 @@ function renderVcpSignal(signal) {
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initSidebar();
+    loadPnlGuardStatus();
     switchTab('sectors');
     loadCredentialsStatus();
     

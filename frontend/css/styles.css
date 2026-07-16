@@ -198,8 +198,100 @@ body {
     padding: 12px 14px;
     border-top: 1px solid var(--border);
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 8px;
+}
+
+.pnl-guard-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-surface);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.pnl-guard-title {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+.pnl-guard-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+}
+.pnl-guard-label {
+    font-size: 0.58rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 4px;
+    width: 100%;
+}
+.pnl-label-text {
+    color: var(--text-muted);
+    min-width: 0;
+    white-space: nowrap;
+}
+.pnl-profit-text { color: #22c55e; font-weight: 700; }
+.pnl-loss-text { color: #ef4444; font-weight: 700; }
+.pnl-guard-input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 4px 6px;
+    font-size: 0.62rem;
+    text-align: right;
+}
+.pnl-guard-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+/* Remove browser up/down spinner buttons on number inputs */
+.pnl-guard-input::-webkit-outer-spin-button,
+.pnl-guard-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.pnl-guard-input[type=number] {
+    -moz-appearance: textfield;
+}
+.pnl-guard-actions {
+    display: flex;
+    gap: 6px;
+}
+.pnl-guard-btn {
+    flex: 1;
+    border: 1px solid var(--btn2-border);
+    background: var(--btn2-bg);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 0.58rem;
+    padding: 4px 6px;
+    cursor: pointer;
+}
+.pnl-guard-btn:hover {
+    background: var(--btn2-bg-hover);
+}
+.pnl-guard-btn-primary {
+    border-color: #22c55e;
+    color: #22c55e;
+}
+.pnl-guard-status {
+    font-size: 0.56rem;
+    color: var(--text-muted);
+    line-height: 1.2;
 }
 
 /* ── Theme Toggle ── */
@@ -214,6 +306,9 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+.sidebar-footer .theme-toggle {
+    align-self: flex-end;
 }
 .theme-toggle:hover {
     background: var(--btn2-bg-hover);
@@ -474,6 +569,9 @@ body {
 .sidebar.collapsed .sidebar-footer {
     justify-content: center;
     padding: 10px 4px;
+}
+.sidebar.collapsed .pnl-guard-card {
+    display: none;
 }
 .sidebar.collapsed .sidebar-collapse-btn {
     opacity: 1;

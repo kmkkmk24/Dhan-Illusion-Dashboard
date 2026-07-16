@@ -524,6 +524,64 @@ class DhanClient:
 
     # ── Order Management APIs ──
 
+    async def set_pnl_exit(
+        self,
+        *,
+        profit_value: float | None = None,
+        loss_value: float | None = None,
+        product_types: list[str] | None = None,
+        enable_kill_switch: bool = False,
+    ) -> Optional[dict]:
+        """Configure account-level P&L based exit for current trading day."""
+        client = await self._get_client()
+        payload: dict = {
+            "dhanClientId": self.client_id,
+            "productType": product_types or ["INTRADAY"],
+            "enableKillSwitch": bool(enable_kill_switch),
+        }
+        if profit_value is not None:
+            payload["profitValue"] = float(profit_value)
+        if loss_value is not None:
+            payload["lossValue"] = float(loss_value)
+        try:
+            response = await client.post("/pnlExit", json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"P&L exit configure failed: {e.response.status_code} - {e.response.text}")
+            return {"error": True, "status_code": e.response.status_code, "detail": e.response.text}
+        except Exception as e:
+            logger.error(f"P&L exit configure error: {e}")
+            return {"error": True, "detail": str(e)}
+
+    async def get_pnl_exit(self) -> Optional[dict]:
+        """Get active P&L based exit config/status for current day."""
+        client = await self._get_client()
+        try:
+            response = await client.get("/pnlExit")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"P&L exit status failed: {e.response.status_code} - {e.response.text}")
+            return {"error": True, "status_code": e.response.status_code, "detail": e.response.text}
+        except Exception as e:
+            logger.error(f"P&L exit status error: {e}")
+            return {"error": True, "detail": str(e)}
+
+    async def stop_pnl_exit(self) -> Optional[dict]:
+        """Disable active P&L based exit config."""
+        client = await self._get_client()
+        try:
+            response = await client.delete("/pnlExit")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"P&L exit stop failed: {e.response.status_code} - {e.response.text}")
+            return {"error": True, "status_code": e.response.status_code, "detail": e.response.text}
+        except Exception as e:
+            logger.error(f"P&L exit stop error: {e}")
+            return {"error": True, "detail": str(e)}
+
     async def place_order(
         self,
         security_id: str,

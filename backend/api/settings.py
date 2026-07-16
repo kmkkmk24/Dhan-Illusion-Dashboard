@@ -576,6 +576,97 @@ async def scheduler_resume():
     return {"message": "Scheduler resumed"}
 
 
+@router.get("/pnl-exit")
+async def get_pnl_exit_status():
+    """Get the current Dhan P&L based exit configuration for today."""
+    from backend.services.dhan_client import DhanClient
+
+    client = DhanClient()
+    try:
+        result = await client.get_pnl_exit()
+        if not result:
+            return {"success": False, "message": "No response from Dhan"}
+        if result.get("error"):
+            return {"success": False, "message": result.get("detail", "Failed to fetch P&L exit")}
+        # Dhan can return HTTP 200 with business-level error in body.
+        if str(result.get("status", "")).upper() == "ERROR":
+            return {"success": False, "message": result.get("message", "P&L exit status error"), "data": result}
+        return {"success": True, "data": result}
+    finally:
+        await client.close()
+
+
+@router.post("/pnl-exit")
+async def configure_pnl_exit(payload: dict):
+    """Configure daily max profit/loss auto-exit using Dhan P&L exit API."""
+    from backend.services.dhan_client import DhanClient
+
+    max_profit = payload.get("max_profit")
+    max_loss = payload.get("max_loss")
+    enable_kill_switch = bool(payload.get("enable_kill_switch", False))
+    product_type = payload.get("product_type") or ["INTRADAY", "DELIVERY"]
+
+    if max_profit is None and max_loss is None:
+        return {"success": False, "message": "Provide at least one of max_profit or max_loss"}
+
+    try:
+        if max_profit is not None and float(max_profit) <= 0:
+            return {"success": False, "message": "max_profit must be greater than 0"}
+        if max_loss is not None and float(max_loss) <= 0:
+            return {"success": False, "message": "max_loss must be greater than 0"}
+    except (TypeError, ValueError):
+        return {"success": False, "message": "max_profit/max_loss must be numeric"}
+
+    # UX-friendly contract: user enters positive max loss in UI, while Dhan expects
+    # loss threshold as a negative number.
+    profit_value = abs(float(max_profit)) if max_profit is not None else None
+    loss_value = -abs(float(max_loss)) if max_loss is not None else None
+
+    if isinstance(product_type, str):
+        product_type = [product_type]
+    allowed = {"INTRADAY", "DELIVERY"}
+    product_type = [str(p).upper() for p in product_type if str(p).upper() in allowed]
+    if not product_type:
+        product_type = ["INTRADAY", "DELIVERY"]
+
+    client = DhanClient()
+    try:
+        result = await client.set_pnl_exit(
+            profit_value=profit_value,
+            loss_value=loss_value,
+            product_types=product_type,
+            enable_kill_switch=enable_kill_switch,
+        )
+        if not result:
+            return {"success": False, "message": "No response from Dhan"}
+        if result.get("error"):
+            return {"success": False, "message": result.get("detail", "Failed to configure P&L exit")}
+        if str(result.get("status", "")).upper() == "ERROR":
+            return {"success": False, "message": result.get("message", "Failed to configure P&L exit"), "data": result}
+        return {"success": True, "message": "Daily P&L guard configured", "data": result}
+    finally:
+        await client.close()
+
+
+@router.delete("/pnl-exit")
+async def disable_pnl_exit():
+    """Disable active Dhan P&L based exit configuration."""
+    from backend.services.dhan_client import DhanClient
+
+    client = DhanClient()
+    try:
+        result = await client.stop_pnl_exit()
+        if not result:
+            return {"success": False, "message": "No response from Dhan"}
+        if result.get("error"):
+            return {"success": False, "message": result.get("detail", "Failed to disable P&L exit")}
+        if str(result.get("status", "")).upper() == "ERROR":
+            return {"success": False, "message": result.get("message", "Failed to disable P&L exit"), "data": result}
+        return {"success": True, "message": "Daily P&L guard disabled", "data": result}
+    finally:
+        await client.close()
+
+
 @router.post("/token/refresh")
 async def refresh_dhan_token():
     """Manually refresh/generate the Dhan access token."""
