@@ -114,7 +114,7 @@
     </aside>
 
     <!-- Main Content -->
-    <main class="flex-1 overflow-hidden flex flex-col" style="padding:12px 16px">
+    <main class="flex-1 overflow-hidden flex flex-col min-h-0" style="padding:12px 16px">
 
         <!-- Sector Analysis Tab -->
         <section id="content-sectors" class="tab-content flex flex-col flex-1 overflow-hidden">
@@ -326,7 +326,7 @@
         </section>
 
         <!-- Index Trading Tab -->
-        <section id="content-index" class="tab-content hidden flex flex-col flex-1 overflow-hidden">
+        <section id="content-index" class="tab-content hidden flex flex-col flex-1 overflow-auto min-h-0">
             <div class="flex items-center justify-between mb-2 flex-shrink-0">
                 <div class="flex items-center gap-2">
                     <h2 class="text-xs font-bold" style="color:var(--text-heading)">Index Trading</h2>
@@ -344,8 +344,12 @@
                 <button class="filter-pill active" data-value="nifty" onclick="switchIndexSubTab('nifty', this)">NIFTY</button>
                 <button class="filter-pill" data-value="sensex" onclick="switchIndexSubTab('sensex', this)">SENSEX</button>
             </div>
-            <div class="flex flex-col gap-3 flex-1 overflow-hidden">
-                <div id="index-panel-nifty" class="flex-1 flex flex-col overflow-hidden">
+            <div class="filter-pills mb-2 flex-shrink-0" id="index-entry-mode">
+                <button class="filter-pill active" data-value="pullback" onclick="switchIndexEntryMode('pullback', this)">Pullback Entry</button>
+                <button class="filter-pill" data-value="immediate" onclick="switchIndexEntryMode('immediate', this)">Immediate Entry</button>
+            </div>
+            <div class="flex flex-col gap-3 flex-1 overflow-auto min-h-0 pr-1">
+                <div id="index-panel-nifty" class="flex-1 flex flex-col overflow-hidden" style="min-height:190px">
                     <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#22c55e">
                         <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 6px rgba(34,197,94,0.4)"></span> Nifty Setups
                     </h3>
@@ -353,12 +357,105 @@
                         <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run Index scan to find Nifty setups</div>
                     </div>
                 </div>
-                <div id="index-panel-sensex" class="flex-1 flex flex-col overflow-hidden hidden">
+                <div id="index-panel-sensex" class="flex-1 flex flex-col overflow-hidden hidden" style="min-height:190px">
                     <h3 class="text-2xs font-bold uppercase tracking-wide mb-1 flex-shrink-0 flex items-center gap-1.5" style="color:#38bdf8">
                         <span style="width:6px;height:6px;border-radius:50%;background:#38bdf8;display:inline-block;box-shadow:0 0 6px rgba(56,189,248,0.4)"></span> Sensex Setups
                     </h3>
                     <div id="index-sensex-table" class="glass-card-sm overflow-auto flex-1">
                         <div class="p-6 text-center text-2xs" style="color:var(--text-muted)">Run Index scan to find Sensex setups</div>
+                    </div>
+                </div>
+                <div id="index-manual-desk" class="glass-card-sm p-3 flex-shrink-0" style="min-height:210px">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-2xs font-bold uppercase tracking-wide flex items-center gap-1.5" style="color:#fbbf24">
+                            <span style="width:6px;height:6px;border-radius:50%;background:#fbbf24;display:inline-block;box-shadow:0 0 6px rgba(251,191,36,0.4)"></span> Index Execution Desk
+                        </h3>
+                        <div class="flex items-center gap-2">
+                            <span id="index-manual-status" class="text-2xs" style="color:var(--text-muted)"></span>
+                            <button onclick="scrollToIndexOpenPositions()" class="btn-secondary px-2 py-1 rounded-lg text-2xs">Open Positions ↓</button>
+                            <button onclick="refreshIndexManualDesk()" id="btn-index-manual-refresh" class="btn-secondary px-2 py-1 rounded-lg text-2xs">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-3 mb-2">
+                        <div class="glass-card-sm p-2">
+                            <div class="text-2xs font-semibold mb-2" style="color:#22c55e">CE (Call) Desk</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">Strike</span>
+                                    <input id="index-ce-strike" class="themed-input rounded px-2 py-1 text-2xs" placeholder="ATM default">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">Lots</span>
+                                    <input id="index-ce-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="1" value="1" oninput="updateIndexManualAmount('ce')">
+                                </div>
+                                <div class="flex flex-col gap-1 col-span-2">
+                                    <span class="text-2xs" style="color:var(--text-muted)">SL Premium</span>
+                                    <input id="index-ce-sl" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05" placeholder="Auto" oninput="updateIndexManualAmount('ce')">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T1 Premium</span>
+                                    <input id="index-ce-t1" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T1 Lots</span>
+                                    <input id="index-ce-t1-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0" value="0">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T2 Premium</span>
+                                    <input id="index-ce-t2" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T2 Lots</span>
+                                    <input id="index-ce-t2-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0" value="0">
+                                </div>
+                            </div>
+                            <div id="index-ce-amount" class="text-2xs mt-1" style="color:var(--text-muted)">CMP: - · Qty: - · Amount Required: -</div>
+                            <button onclick="saveIndexDeskPlan('ce')" class="btn-secondary w-full mt-2 px-2 py-1 rounded text-2xs">Save CE Plan</button>
+                            <button onclick="placeIndexManualTrade('CE')" id="btn-index-ce-buy" class="btn-primary w-full mt-2 px-2 py-1 rounded text-2xs">Buy CE @ CMP + Auto SL</button>
+                        </div>
+                        <div class="glass-card-sm p-2">
+                            <div class="text-2xs font-semibold mb-2" style="color:#60a5fa">PE (Put) Desk</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">Strike</span>
+                                    <input id="index-pe-strike" class="themed-input rounded px-2 py-1 text-2xs" placeholder="ATM default">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">Lots</span>
+                                    <input id="index-pe-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="1" value="1" oninput="updateIndexManualAmount('pe')">
+                                </div>
+                                <div class="flex flex-col gap-1 col-span-2">
+                                    <span class="text-2xs" style="color:var(--text-muted)">SL Premium</span>
+                                    <input id="index-pe-sl" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05" placeholder="Auto" oninput="updateIndexManualAmount('pe')">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T1 Premium</span>
+                                    <input id="index-pe-t1" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T1 Lots</span>
+                                    <input id="index-pe-t1-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0" value="0">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T2 Premium</span>
+                                    <input id="index-pe-t2" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0.05" step="0.05">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <span class="text-2xs" style="color:var(--text-muted)">T2 Lots</span>
+                                    <input id="index-pe-t2-lots" class="themed-input rounded px-2 py-1 text-2xs" type="number" min="0" value="0">
+                                </div>
+                            </div>
+                            <div id="index-pe-amount" class="text-2xs mt-1" style="color:var(--text-muted)">CMP: - · Qty: - · Amount Required: -</div>
+                            <button onclick="saveIndexDeskPlan('pe')" class="btn-secondary w-full mt-2 px-2 py-1 rounded text-2xs">Save PE Plan</button>
+                            <button onclick="placeIndexManualTrade('PE')" id="btn-index-pe-buy" class="btn-primary w-full mt-2 px-2 py-1 rounded text-2xs">Buy PE @ CMP + Auto SL</button>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between mt-2 mb-1">
+                        <h4 class="text-2xs font-semibold uppercase tracking-wide" style="color:#a5b4fc">Open Positions (Live Editable)</h4>
+                        <span class="text-2xs" style="color:var(--text-muted)">Use row-level Save to modify live SL/T1/T2</span>
+                    </div>
+                    <div id="index-manual-open" class="overflow-auto" style="max-height:180px;min-height:72px;border:1px dashed var(--glass-border);border-radius:8px;padding:2px">
+                        <div class="text-2xs text-center p-2" style="color:var(--text-muted)">No open manual positions</div>
                     </div>
                 </div>
             </div>

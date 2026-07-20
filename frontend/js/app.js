@@ -241,6 +241,10 @@ function switchTab(tab) {
     if (tab === 'value') { loadValueInvesting(); }
     if (tab === 'journal') loadTrades();
     if (tab === 'settings') { loadBackups(); loadSectorDisplay(); }
+    if (tab !== 'index' && _indexManualMonitorTimer) {
+        clearInterval(_indexManualMonitorTimer);
+        _indexManualMonitorTimer = null;
+    }
 }
 
 // --- Sector Analysis Tab ---
@@ -1800,7 +1804,10 @@ function switchFnoSubTab(mode, btn) {
 
 let _indexMode = 'intraday';
 let _indexSubTab = 'nifty';
+let _indexEntryMode = 'pullback';
 let _trackingTimer = null;
+let _indexManualSetup = null;
+let _indexManualMonitorTimer = null;
 
 function switchIndexSubTab(mode, btn) {
     _indexSubTab = mode === 'sensex' ? 'sensex' : 'nifty';
@@ -1811,6 +1818,374 @@ function switchIndexSubTab(mode, btn) {
 
     const pills = document.querySelectorAll('#index-subtab .filter-pill');
     pills.forEach(p => p.classList.toggle('active', p.dataset.value === _indexSubTab));
+    refreshIndexManualDesk();
+}
+
+function switchIndexEntryMode(mode, btn) {
+    _indexEntryMode = mode === 'immediate' ? 'immediate' : 'pullback';
+    const pills = document.querySelectorAll('#index-entry-mode .filter-pill');
+    pills.forEach(p => p.classList.toggle('active', p.dataset.value === _indexEntryMode));
+    // Re-render from latest fetched data if available
+    if (window._lastIndexSignalsData) {
+        renderIndexSignals(window._lastIndexSignalsData, _indexMode);
+    }
+}
+
+function _setIndexManualStatus(msg, isError = false) {
+    const el = document.getElementById('index-manual-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = isError ? '#ef4444' : 'var(--text-muted)';
+}
+
+function _activeIndexKey() {
+    return _indexSubTab === 'sensex' ? 'sensex' : 'nifty';
+}
+
+function scrollToIndexOpenPositions() {
+    const el = document.getElementById('index-manual-open');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _indexDeskPlanKey(side) {
+    const s = side === 'pe' ? 'pe' : 'ce';
+    return `index-desk-plan:${_activeIndexKey()}:${s}`;
+}
+
+function saveIndexDeskPlan(side) {
+    const s = side === 'pe' ? 'pe' : 'ce';
+    const fields = {
+        strike: document.getElementById(`index-${s}-strike`)?.value || '',
+        lots: document.getElementById(`index-${s}-lots`)?.value || '',
+        sl: document.getElementById(`index-${s}-sl`)?.value || '',
+        t1: document.getElementById(`index-${s}-t1`)?.value || '',
+        t1Lots: document.getElementById(`index-${s}-t1-lots`)?.value || '',
+        t2: document.getElementById(`index-${s}-t2`)?.value || '',
+        t2Lots: document.getElementById(`index-${s}-t2-lots`)?.value || '',
+    };
+    localStorage.setItem(_indexDeskPlanKey(s), JSON.stringify(fields));
+    _setIndexManualStatus(`${s.toUpperCase()} plan saved`);
+}
+
+function updateIndexManualAmount(sideKey) {
+    const side = sideKey === 'pe' ? 'pe' : 'ce';
+    const amountEl = document.getElementById(`index-${side}-amount`);
+    const lotsEl = document.getElementById(`index-${side}-lots`);
+    const slEl = document.getElementById(`index-${side}-sl`);
+    const t1El = document.getElementById(`index-${side}-t1`);
+    const t2El = document.getElementById(`index-${side}-t2`);
+    const t1LotsEl = document.getElementById(`index-${side}-t1-lots`);
+    const t2LotsEl = document.getElementById(`index-${side}-t2-lots`);
+    if (!amountEl || !lotsEl || !slEl || !t1El || !t2El || !t1LotsEl || !t2LotsEl) return;
+
+    const setup = _indexManualSetup || {};
+    const sideData = setup[side] || {};
+    const cmpRaw = Number(sideData.ltp || 0);
+    const cmp = cmpRaw > 0 ? Number(cmpRaw.toFixed(2)) : 0;
+    const sl = Number(slEl.value || 0);
+    const t1 = Number(t1El.value || 0);
+    const t2 = Number(t2El.value || 0);
+    const t1Lots = Math.max(0, Number(t1LotsEl.value || 0));
+    const t2Lots = Math.max(0, Number(t2LotsEl.value || 0));
+    const fallbackLot = _activeIndexKey() === 'sensex' ? 20 : 65;
+    const lotSize = Number(setup.lot_size || fallbackLot);
+    const lots = Math.max(1, Number(lotsEl.value || 1));
+    const qty = lotSize > 0 ? lotSize * lots : 0;
+    const amount = cmp > 0 && qty > 0 ? cmp * qty : null;
+    const slGap = cmp > 0 && sl > 0 ? (cmp - sl) : null;
+    const riskAmount = slGap != null && qty > 0 ? (slGap * qty) : null;
+    const t1Qty = lotSize > 0 ? t1Lots * lotSize : 0;
+    const t2Qty = lotSize > 0 ? t2Lots * lotSize : 0;
+    const t1Profit = (cmp > 0 && t1 > 0 && t1Qty > 0) ? (t1 - cmp) * t1Qty : null;
+    const t2Profit = (cmp > 0 && t2 > 0 && t2Qty > 0) ? (t2 - cmp) * t2Qty : null;
+    const probableProfit = ((t1Profit || 0) + (t2Profit || 0));
+
+    const fmt = n => new Intl.NumberFormat('en-IN').format(Math.round(Number(n || 0)));
+    const fmt2 = n => Number(n || 0).toFixed(2);
+    const profitLabel = v => v == null ? '-' : `₹${fmt(v)}`;
+    amountEl.textContent = amount != null
+        ? `CMP: ₹${fmt2(cmp)} · Lot Size: ${lotSize} · Qty: ${qty} · T1 Qty: ${t1Qty} · T2 Qty: ${t2Qty} · SL Gap: ₹${slGap != null ? fmt2(slGap) : '-'} · Amount Required: ₹${fmt(amount)}${riskAmount != null ? ` · Risk @ SL: ₹${fmt(riskAmount)}` : ''} · T1 Profit: ${profitLabel(t1Profit)} · T2 Profit: ${profitLabel(t2Profit)} · Total Probable Profit: ${profitLabel((t1Profit != null || t2Profit != null) ? probableProfit : null)}`
+        : 'CMP: - · Qty: - · Amount Required: -';
+}
+
+async function refreshIndexManualDesk() {
+    await Promise.all([loadIndexManualSetup(), loadIndexManualOpenTrades()]);
+    startIndexManualMonitor();
+}
+
+async function loadIndexManualSetup() {
+    const indexKey = _activeIndexKey();
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/manual/setup?index=${indexKey}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Failed to load execution desk');
+        _indexManualSetup = data;
+
+        const ceStrike = document.getElementById('index-ce-strike');
+        const peStrike = document.getElementById('index-pe-strike');
+        const ceSl = document.getElementById('index-ce-sl');
+        const peSl = document.getElementById('index-pe-sl');
+        const ceT1 = document.getElementById('index-ce-t1');
+        const ceT2 = document.getElementById('index-ce-t2');
+        const ceT1Lots = document.getElementById('index-ce-t1-lots');
+        const ceT2Lots = document.getElementById('index-ce-t2-lots');
+        const peT1 = document.getElementById('index-pe-t1');
+        const peT2 = document.getElementById('index-pe-t2');
+        const peT1Lots = document.getElementById('index-pe-t1-lots');
+        const peT2Lots = document.getElementById('index-pe-t2-lots');
+        const ceLots = document.getElementById('index-ce-lots');
+        const peLots = document.getElementById('index-pe-lots');
+        if (ceStrike && data?.ce?.strike) ceStrike.value = String(Math.round(Number(data.ce.strike)));
+        if (peStrike && data?.pe?.strike) peStrike.value = String(Math.round(Number(data.pe.strike)));
+        // Auto-fill SL as premium value (not percentage): default 20% below CMP.
+        if (ceSl && data?.ce?.ltp != null) ceSl.value = String(Math.max(0.05, Number((Number(data.ce.ltp) * 0.8).toFixed(2))));
+        if (peSl && data?.pe?.ltp != null) peSl.value = String(Math.max(0.05, Number((Number(data.pe.ltp) * 0.8).toFixed(2))));
+        if (ceT1 && data?.ce?.ltp != null) ceT1.value = Number((Number(data.ce.ltp) * 1.05).toFixed(2));
+        if (ceT2 && data?.ce?.ltp != null) ceT2.value = Number((Number(data.ce.ltp) * 1.10).toFixed(2));
+        if (peT1 && data?.pe?.ltp != null) peT1.value = Number((Number(data.pe.ltp) * 1.05).toFixed(2));
+        if (peT2 && data?.pe?.ltp != null) peT2.value = Number((Number(data.pe.ltp) * 1.10).toFixed(2));
+        const ceLotsVal = Math.max(1, Number(ceLots?.value || 1));
+        const peLotsVal = Math.max(1, Number(peLots?.value || 1));
+        const ceHalf = Math.floor(ceLotsVal / 2);
+        const peHalf = Math.floor(peLotsVal / 2);
+        if (ceT1Lots) ceT1Lots.value = String(ceHalf);
+        if (ceT2Lots) ceT2Lots.value = String(Math.max(0, ceLotsVal - ceHalf));
+        if (peT1Lots) peT1Lots.value = String(peHalf);
+        if (peT2Lots) peT2Lots.value = String(Math.max(0, peLotsVal - peHalf));
+
+        // Load saved manual plan overrides if present.
+        try {
+            const ceSaved = JSON.parse(localStorage.getItem(_indexDeskPlanKey('ce')) || 'null');
+            const peSaved = JSON.parse(localStorage.getItem(_indexDeskPlanKey('pe')) || 'null');
+            if (ceSaved) {
+                if (ceStrike && ceSaved.strike) ceStrike.value = ceSaved.strike;
+                if (ceLots && ceSaved.lots) ceLots.value = ceSaved.lots;
+                if (ceSl && ceSaved.sl) ceSl.value = ceSaved.sl;
+                if (ceT1 && ceSaved.t1) ceT1.value = ceSaved.t1;
+                if (ceT2 && ceSaved.t2) ceT2.value = ceSaved.t2;
+                if (ceT1Lots && ceSaved.t1Lots) ceT1Lots.value = ceSaved.t1Lots;
+                if (ceT2Lots && ceSaved.t2Lots) ceT2Lots.value = ceSaved.t2Lots;
+            }
+            if (peSaved) {
+                if (peStrike && peSaved.strike) peStrike.value = peSaved.strike;
+                if (peLots && peSaved.lots) peLots.value = peSaved.lots;
+                if (peSl && peSaved.sl) peSl.value = peSaved.sl;
+                if (peT1 && peSaved.t1) peT1.value = peSaved.t1;
+                if (peT2 && peSaved.t2) peT2.value = peSaved.t2;
+                if (peT1Lots && peSaved.t1Lots) peT1Lots.value = peSaved.t1Lots;
+                if (peT2Lots && peSaved.t2Lots) peT2Lots.value = peSaved.t2Lots;
+            }
+        } catch (_) {
+            // ignore localStorage parse errors
+        }
+        updateIndexManualAmount('ce');
+        updateIndexManualAmount('pe');
+
+        const mktTag = data.market_open ? 'Live' : 'Closed';
+        _setIndexManualStatus(`${data.index} Spot ₹${Number(data.spot || 0).toFixed(1)} · Exp ${data.expiry} · ${mktTag}`);
+    } catch (e) {
+        _setIndexManualStatus(`Desk load failed: ${e.message}`, true);
+    }
+}
+
+async function loadIndexManualOpenTrades() {
+    const indexKey = _activeIndexKey();
+    const holder = document.getElementById('index-manual-open');
+    if (!holder) return;
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/manual/open?index=${indexKey}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Failed to load open positions');
+        const rows = data.rows || [];
+        if (!rows.length) {
+            holder.innerHTML = `<div class="text-2xs text-center p-2" style="color:var(--text-muted)">No open manual positions</div>`;
+            return;
+        }
+        const fmt = n => new Intl.NumberFormat('en-IN').format(Math.round(Number(n || 0)));
+        holder.innerHTML = `
+            <table class="data-table" style="font-size:0.58rem">
+                <thead>
+                    <tr>
+                        <th>Leg</th>
+                        <th>Entry</th>
+                        <th>Live</th>
+                        <th>MTM</th>
+                        <th>SL</th>
+                        <th>T1</th>
+                        <th>T2</th>
+                        <th>Update Plan</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(r => {
+                        const live = r.live_ltp != null ? Number(r.live_ltp) : null;
+                        const entry = r.entry_price != null ? Number(r.entry_price) : null;
+                        const qty = r.quantity != null ? Number(r.quantity) : 0;
+                        const mtm = (live != null && entry != null && qty) ? (live - entry) * qty : null;
+                        const mtmColor = mtm == null ? 'var(--text-muted)' : (mtm >= 0 ? '#22c55e' : '#ef4444');
+                        return `
+                        <tr>
+                            <td>${r.strike || '-'} ${r.side || ''} · ${(r.remaining_lots ?? r.lots ?? 1)}L left</td>
+                            <td>₹${fmt(r.entry_price)}</td>
+                            <td>${r.live_ltp != null ? `₹${fmt(r.live_ltp)}` : '-'}</td>
+                            <td style="color:${mtmColor};font-weight:600">${mtm == null ? '-' : `₹${fmt(mtm)}`}</td>
+                            <td><input id="manual-sl-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="1" value="${r.sl_price || ''}" style="width:72px"></td>
+                            <td style="display:flex;gap:4px;align-items:center">
+                                <input id="manual-t1-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="0.05" value="${r.t1_price ?? ''}" style="width:68px">
+                                <input id="manual-t1l-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="0" value="${r.t1_lots ?? 0}" style="width:42px" title="T1 lots">
+                            </td>
+                            <td style="display:flex;gap:4px;align-items:center">
+                                <input id="manual-t2-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="0.05" value="${r.t2_price ?? ''}" style="width:68px">
+                                <input id="manual-t2l-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="0" value="${r.t2_lots ?? 0}" style="width:42px" title="T2 lots">
+                            </td>
+                            <td style="display:flex;gap:4px;align-items:center">
+                                <button onclick="modifyIndexManualPlan(${r.trade_id})" class="btn-secondary px-2 py-0.5 rounded text-2xs">Save</button>
+                            </td>
+                        </tr>
+                    `;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        holder.innerHTML = `<div class="text-2xs text-center p-2" style="color:#ef4444">Open positions load failed: ${e.message}</div>`;
+    }
+}
+
+async function placeIndexManualTrade(side) {
+    const sideKey = side === 'PE' ? 'pe' : 'ce';
+    const strikeEl = document.getElementById(`index-${sideKey}-strike`);
+    const lotsEl = document.getElementById(`index-${sideKey}-lots`);
+    const slEl = document.getElementById(`index-${sideKey}-sl`);
+    const t1El = document.getElementById(`index-${sideKey}-t1`);
+    const t2El = document.getElementById(`index-${sideKey}-t2`);
+    const t1LotsEl = document.getElementById(`index-${sideKey}-t1-lots`);
+    const t2LotsEl = document.getElementById(`index-${sideKey}-t2-lots`);
+    const btn = document.getElementById(`btn-index-${sideKey}-buy`);
+    if (!strikeEl || !lotsEl || !slEl || !t1El || !t2El || !t1LotsEl || !t2LotsEl) return;
+
+    const strike = Number(strikeEl.value || 0);
+    const lots = Number(lotsEl.value || 1);
+    const slValue = Number(slEl.value || 0);
+    const t1Price = Number(t1El.value || 0);
+    const t2Price = Number(t2El.value || 0);
+    const t1Lots = Number(t1LotsEl.value || 0);
+    const t2Lots = Number(t2LotsEl.value || 0);
+    if (!strike || strike <= 0) {
+        _setIndexManualStatus('Enter a valid strike', true);
+        return;
+    }
+    if (!lots || lots < 1) {
+        _setIndexManualStatus('Lots must be at least 1', true);
+        return;
+    }
+    if (!slValue || slValue <= 0) {
+        _setIndexManualStatus('Enter a valid SL premium value', true);
+        return;
+    }
+    if (t1Price > 0 && t2Price > 0 && t2Price <= t1Price) {
+        _setIndexManualStatus('T2 should be greater than T1', true);
+        return;
+    }
+    if ((t1Lots + t2Lots) > lots) {
+        _setIndexManualStatus('T1 + T2 lots cannot exceed total lots', true);
+        return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Placing...'; btn.style.opacity = '0.7'; }
+    _setIndexManualStatus(`Placing ${side} order...`);
+    try {
+        const payload = {
+            index: _activeIndexKey(),
+            side,
+            strike,
+            lots,
+            sl_price: slValue,
+            t1_price: t1Price || null,
+            t1_lots: t1Lots || 0,
+            t2_price: t2Price || null,
+            t2_lots: t2Lots || 0,
+            expiry: _indexManualSetup?.expiry || null,
+        };
+        const resp = await fetch(`${API_BASE}/api/index-trading/manual/place`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Order placement failed');
+        _setIndexManualStatus(`Executed ${side} ${data.strike} @ ₹${data.entry_price} · SL ₹${data.sl_price}`);
+        await loadIndexManualOpenTrades();
+        await loadIndexSignals(_indexMode); // Moves into upper tracking section
+        startTradeTracking();
+    } catch (e) {
+        _setIndexManualStatus(`Order failed: ${e.message}`, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = side === 'PE' ? 'Buy PE @ CMP + Auto SL' : 'Buy CE @ CMP + Auto SL';
+            btn.style.opacity = '1';
+        }
+    }
+}
+
+async function modifyIndexManualPlan(tradeId) {
+    const slInput = document.getElementById(`manual-sl-${tradeId}`);
+    const t1Input = document.getElementById(`manual-t1-${tradeId}`);
+    const t2Input = document.getElementById(`manual-t2-${tradeId}`);
+    const t1LotsInput = document.getElementById(`manual-t1l-${tradeId}`);
+    const t2LotsInput = document.getElementById(`manual-t2l-${tradeId}`);
+    if (!slInput || !t1Input || !t2Input || !t1LotsInput || !t2LotsInput) return;
+
+    const sl = Number(slInput.value || 0);
+    const t1 = Number(t1Input.value || 0);
+    const t2 = Number(t2Input.value || 0);
+    const t1Lots = Number(t1LotsInput.value || 0);
+    const t2Lots = Number(t2LotsInput.value || 0);
+    if (!sl || sl <= 0) {
+        _setIndexManualStatus('Enter valid SL premium value', true);
+        return;
+    }
+    if (t1 > 0 && t2 > 0 && t2 <= t1) {
+        _setIndexManualStatus('T2 should be greater than T1', true);
+        return;
+    }
+
+    _setIndexManualStatus(`Updating SL/T1/T2 for trade ${tradeId}...`);
+    try {
+        const resp = await fetch(`${API_BASE}/api/index-trading/manual/trades/${tradeId}/targets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sl_price: sl,
+                t1_price: t1 || null,
+                t2_price: t2 || null,
+                t1_lots: t1Lots || 0,
+                t2_lots: t2Lots || 0
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Plan update failed');
+        _setIndexManualStatus(`Updated: SL ₹${data.sl_price} · T1 ${data.t1_price || '-'} · T2 ${data.t2_price || '-'}`);
+        await loadIndexManualOpenTrades();
+        await loadIndexSignals(_indexMode);
+    } catch (e) {
+        _setIndexManualStatus(`Plan update failed: ${e.message}`, true);
+    }
+}
+
+function startIndexManualMonitor() {
+    if (_indexManualMonitorTimer) return;
+    _indexManualMonitorTimer = setInterval(async () => {
+        try {
+            await fetch(`${API_BASE}/api/index-trading/manual/monitor?index=${_activeIndexKey()}`, { method: 'POST' });
+            await loadIndexManualOpenTrades();
+            await loadIndexSignals(_indexMode);
+        } catch (_) {
+            // ignore transient monitor errors
+        }
+    }, 15000);
 }
 
 async function loadIndexSignals(mode = _indexMode) {
@@ -1821,7 +2196,9 @@ async function loadIndexSignals(mode = _indexMode) {
     try {
         const resp = await fetch(`${API_BASE}/api/index-trading/signals?mode=${mode}`);
         const data = await resp.json();
+        window._lastIndexSignalsData = data;
         renderIndexSignals(data, mode);
+        refreshIndexManualDesk();
 
         if (status) {
             const ts = data.as_of ? new Date(data.as_of).toLocaleTimeString() : '';
@@ -1851,6 +2228,7 @@ async function runIndexScan(mode = _indexMode) {
         const resp = await fetch(`${API_BASE}/api/index-trading/scan/run?mode=${mode}`, { method: 'POST' });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data?.detail || 'Scan failed');
+        window._lastIndexSignalsData = data;
         renderIndexSignals(data, mode);
         if (status) {
             const skips = data.summary?.skip_reason_counts;
@@ -1875,6 +2253,7 @@ function renderIndexSignals(data, mode = _indexMode) {
     const signals = data.signals || [];
     const fmt = n => new Intl.NumberFormat('en-IN').format(n);
     const buyRangePct = 0.03;
+    const immediateRangePct = 0.02;
     const exitRangePct = 0.1;
     const hasNumber = value => value !== null && value !== undefined && !Number.isNaN(Number(value));
 
@@ -1918,8 +2297,16 @@ function renderIndexSignals(data, mode = _indexMode) {
         const body = rows.map(r => {
             const click = r.signal_id ? `onclick="viewSignalDetail(${r.signal_id})"` : '';
             const strikeLabel = `${r.strike || '-'} ${r.direction || ''}`.trim();
-            const entryLow = hasNumber(r.entry_premium_low) ? Number(r.entry_premium_low) : (hasNumber(r.premium) ? Number(r.premium) * (1 - buyRangePct) : null);
-            const entryHigh = hasNumber(r.entry_premium_high) ? Number(r.entry_premium_high) : (hasNumber(r.premium) ? Number(r.premium) * (1 + buyRangePct) : null);
+            const liveLtp = hasNumber(r.live_option_ltp) ? Number(r.live_option_ltp) : null;
+            const basePremium = hasNumber(r.premium) ? Number(r.premium) : liveLtp;
+            let entryLow = hasNumber(r.entry_premium_low) ? Number(r.entry_premium_low) : (hasNumber(basePremium) ? Number(basePremium) * (1 - buyRangePct) : null);
+            let entryHigh = hasNumber(r.entry_premium_high) ? Number(r.entry_premium_high) : (hasNumber(basePremium) ? Number(basePremium) * (1 + buyRangePct) : null);
+
+            // Immediate mode: show a tight near-market entry zone around live LTP.
+            if (_indexEntryMode === 'immediate' && hasNumber(liveLtp)) {
+                entryLow = Number(liveLtp) * (1 - immediateRangePct);
+                entryHigh = Number(liveLtp) * (1 + immediateRangePct);
+            }
             const exitLow = hasNumber(r.exit_premium_low) ? Number(r.exit_premium_low) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 - exitRangePct) : null);
             const exitHigh = hasNumber(r.exit_premium_high) ? Number(r.exit_premium_high) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 + exitRangePct) : null);
             const buyRange = hasNumber(entryLow) && hasNumber(entryHigh)
@@ -1939,6 +2326,24 @@ function renderIndexSignals(data, mode = _indexMode) {
             const isTracked = r.is_tracked || false;
             const trackStatus = r.track_status || 'NONE';
             const trackReason = r.track_status_reason || '';
+            let entryStateText = '-';
+            let entryStateColor = '#6b7280';
+            let entryStateBg = 'rgba(107,114,128,0.1)';
+            if (hasNumber(liveLtp) && hasNumber(entryLow) && hasNumber(entryHigh)) {
+                if (liveLtp >= entryLow && liveLtp <= entryHigh) {
+                    entryStateText = 'IN RANGE';
+                    entryStateColor = '#22c55e';
+                    entryStateBg = 'rgba(34,197,94,0.12)';
+                } else if (liveLtp > entryHigh) {
+                    entryStateText = _indexEntryMode === 'immediate' ? 'ABOVE NOW' : 'WAIT PULLBACK';
+                    entryStateColor = '#f59e0b';
+                    entryStateBg = 'rgba(245,158,11,0.12)';
+                } else if (liveLtp < entryLow) {
+                    entryStateText = 'BELOW RANGE';
+                    entryStateColor = '#60a5fa';
+                    entryStateBg = 'rgba(96,165,250,0.12)';
+                }
+            }
             const statusColor = trackStatus === 'HOLD' ? '#3b82f6' : trackStatus === 'EARLY-EXIT' ? '#f97316' : trackStatus === 'SL-HIT' ? '#ef4444' : trackStatus === 'TARGET-HIT' ? '#22c55e' : '#6b7280';
             const statusBg = trackStatus === 'HOLD' ? 'rgba(59,130,246,0.1)' : trackStatus === 'EARLY-EXIT' ? 'rgba(249,115,22,0.1)' : trackStatus === 'SL-HIT' ? 'rgba(239,68,68,0.1)' : trackStatus === 'TARGET-HIT' ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)';
             return `
@@ -1946,7 +2351,11 @@ function renderIndexSignals(data, mode = _indexMode) {
                     <td>${r.index || '-'}</td>
                     <td>${strikeLabel}</td>
                     <td>${formatExpiry(r.expiry)}</td>
+                    <td>${hasNumber(liveLtp) ? formatPrice(liveLtp) : '-'}</td>
                     <td>${buyRange}</td>
+                    <td>
+                        <span class="text-2xs px-2 py-0.5 rounded font-medium" style="background:${entryStateBg};color:${entryStateColor}">${entryStateText}</span>
+                    </td>
                     <td>${exitRange}</td>
                     <td>${formatPrice(r.premium_sl)}</td>
                     <td>${formatLotValue(totalAmount)}</td>
@@ -1979,7 +2388,9 @@ function renderIndexSignals(data, mode = _indexMode) {
                         <th>Script</th>
                         <th>Strike</th>
                         <th>Expiry</th>
+                        <th>Live LTP</th>
                         <th>Premium Buy Range</th>
+                        <th>Entry Zone</th>
                         <th>Premium Exit Range</th>
                         <th>Premium SL</th>
                         <th>Total Amount / Lot</th>

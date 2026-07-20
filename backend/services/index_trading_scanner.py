@@ -176,6 +176,7 @@ class IndexTradingScanner:
         self.target_atr_mean_revert = float(cfg.get("target_atr_mean_revert", 1.2))
         self.sr_lookback_bars = int(cfg.get("sr_lookback_bars", 20))
         self.sr_swing_window = int(cfg.get("sr_swing_window", 3))
+        self.max_sr_distance_atr = float(cfg.get("max_sr_distance_atr", 1.5))
         self.entry_atr_buffer = float(cfg.get("entry_atr_buffer", 0.25))
         self.exit_atr_buffer = float(cfg.get("exit_atr_buffer", 0.4))
         self.sl_atr_buffer = float(cfg.get("sl_atr_buffer", 0.6))
@@ -381,6 +382,13 @@ class IndexTradingScanner:
             support,
             resistance,
         )
+        # Ignore stale/far S/R levels. Using a support several ATRs away can produce
+        # absurd premium entry/SL ranges (e.g. ₹0-₹2 while option LTP is ₹100+).
+        max_sr_dist = self.max_sr_distance_atr * atr_val
+        if support is not None and abs(spot - support) > max_sr_dist:
+            support = None
+        if resistance is not None and abs(resistance - spot) > max_sr_dist:
+            resistance = None
 
         if direction == "CE":
             entry_level = support if support is not None else spot
