@@ -54,6 +54,8 @@ def init_db():
         SectorScore,
         Trade,
         ValueCandidate,
+        AppUser,
+        AppSession,
     )
 
     engine = get_engine()
