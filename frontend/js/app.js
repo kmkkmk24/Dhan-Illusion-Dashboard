@@ -3,6 +3,100 @@
 // ============================================================
 
 const API_BASE = '';
+let _authUser = null;
+
+function isAdminUser() {
+    return (_authUser?.role || '') === 'admin';
+}
+
+function _toggleAuthOverlay(show) {
+    const el = document.getElementById('auth-overlay');
+    if (!el) return;
+    el.style.display = show ? 'flex' : 'none';
+}
+
+function applyRoleAccess() {
+    const badge = document.getElementById('auth-user-badge');
+    const logoutBtn = document.getElementById('auth-logout-btn');
+    if (badge) {
+        badge.textContent = _authUser
+            ? `${_authUser.username} (${_authUser.role})`
+            : '';
+    }
+    if (logoutBtn) logoutBtn.style.display = _authUser ? 'inline-flex' : 'none';
+
+    const settingsTab = document.getElementById('tab-settings');
+    if (settingsTab) settingsTab.style.display = isAdminUser() ? '' : 'none';
+
+    const adminButtons = [
+        'btn-index-scan', 'btn-index-scan-positional',
+        'btn-index-ce-buy', 'btn-index-pe-buy',
+        'btn-index-manual-refresh', 'btn-scan-swing',
+        'btn-scan-fno', 'btn-refresh-instruments', 'btn-value-refresh'
+    ];
+    adminButtons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = !isAdminUser();
+    });
+    const pnlInputs = ['pnl-max-profit', 'pnl-max-loss'];
+    pnlInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !isAdminUser();
+    });
+}
+
+async function initAuth() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/auth/me`);
+        const data = await resp.json();
+        if (data?.authenticated && data?.user) {
+            _authUser = data.user;
+            _toggleAuthOverlay(false);
+            applyRoleAccess();
+            return true;
+        }
+    } catch (_) {}
+    _authUser = null;
+    _toggleAuthOverlay(true);
+    applyRoleAccess();
+    return false;
+}
+
+async function loginAppUser() {
+    const u = document.getElementById('auth-username');
+    const p = document.getElementById('auth-password');
+    const err = document.getElementById('auth-error');
+    const btn = document.getElementById('btn-auth-login');
+    if (!u || !p || !err || !btn) return;
+    err.textContent = '';
+    btn.disabled = true;
+    btn.textContent = 'Signing In...';
+    try {
+        const resp = await fetch(`${API_BASE}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u.value.trim(), password: p.value }),
+        });
+        const data = await resp.json();
+        if (!data?.success) throw new Error(data?.message || 'Login failed');
+        _authUser = data.user;
+        _toggleAuthOverlay(false);
+        applyRoleAccess();
+        startApp();
+    } catch (e) {
+        err.textContent = e.message || 'Login failed';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+    }
+}
+
+async function logoutAppUser() {
+    try { await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST' }); } catch (_) {}
+    _authUser = null;
+    _toggleAuthOverlay(true);
+    applyRoleAccess();
+}
 
 // --- Sidebar Collapse ---
 
@@ -175,6 +269,10 @@ async function loadPnlGuardStatus() {
 }
 
 async function savePnlGuard() {
+    if (!isAdminUser()) {
+        _setPnlGuardStatus('Readonly user cannot modify P&L Guard', true);
+        return;
+    }
     const profitInput = document.getElementById('pnl-max-profit');
     const lossInput = document.getElementById('pnl-max-loss');
     if (!profitInput || !lossInput) return;
@@ -211,6 +309,10 @@ async function savePnlGuard() {
 }
 
 async function disablePnlGuard() {
+    if (!isAdminUser()) {
+        _setPnlGuardStatus('Readonly user cannot disable P&L Guard', true);
+        return;
+    }
     _setPnlGuardStatus('Disabling...');
     try {
         const resp = await fetch(`${API_BASE}/api/settings/pnl-exit`, { method: 'DELETE' });
@@ -228,6 +330,7 @@ async function disablePnlGuard() {
 // --- Tab Switching ---
 
 function switchTab(tab) {
+    if (tab === 'settings' && !isAdminUser()) return;
     document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
 
@@ -1309,12 +1412,13 @@ function renderAnalysisPanel(data) {
                 </div>
 
                 <button id="trade-buy-btn" onclick="_confirmTrade(${s.id}, '${r.option_security_id || ''}', ${r.strike}, '${data.side}', '${data.expiry}', ${data.lot_size}, ${r.sl_premium}, ${r.target_premium})"
-                    style="width:100%;padding:10px;border-radius:8px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:800;font-size:0.75rem;border:none;cursor:pointer;letter-spacing:0.03em;transition:all 0.15s"
+                    ${isAdminUser() ? '' : 'disabled'}
+                    style="width:100%;padding:10px;border-radius:8px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:800;font-size:0.75rem;border:none;cursor:${isAdminUser() ? 'pointer' : 'not-allowed'};opacity:${isAdminUser() ? '1' : '0.55'};letter-spacing:0.03em;transition:all 0.15s"
                     onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
                     BUY ${r.strike} ${data.side} — ₹${fmtR(r.lot_cost)}
                 </button>
                 <div style="font-size:0.45rem;color:var(--text-secondary);text-align:center;margin-top:4px">
-                    Limit order • SL & Target auto-placed as GTT • AMO if market closed
+                    ${isAdminUser() ? 'Limit order • SL & Target auto-placed as GTT • AMO if market closed' : 'Readonly mode: order placement disabled'}
                 </div>
             </div>
             <div id="trade-result-area" style="display:none"></div>
@@ -1582,6 +1686,10 @@ function _updateTotalCost() {
 }
 
 function _confirmTrade(signalId, optionSecId, strike, side, expiry, lotSize, slPremium, targetPremium) {
+    if (!isAdminUser()) {
+        alert('Readonly user cannot place orders.');
+        return;
+    }
     if (!optionSecId) {
         alert('Option security ID not available. Try refreshing the analysis.');
         return;
@@ -1614,6 +1722,7 @@ function _confirmTrade(signalId, optionSecId, strike, side, expiry, lotSize, slP
 }
 
 async function _executeTrade(signalId, optionSecId, strike, side, expiry, lots, lotSize, limitPrice, slPremium, targetPremium) {
+    if (!isAdminUser()) return;
     const btn = document.getElementById('trade-buy-btn');
     const resultArea = document.getElementById('trade-result-area');
     const formArea = document.getElementById('trade-form-area');
@@ -1704,6 +1813,10 @@ async function _executeTrade(signalId, optionSecId, strike, side, expiry, lots, 
 }
 
 async function _exitTradeNow(tradeId, signalId) {
+    if (!isAdminUser()) {
+        alert('Readonly user cannot exit orders.');
+        return;
+    }
     const trade = _tradeAnalysisData?.active_trade;
     if (!trade) return;
 
@@ -1753,6 +1866,10 @@ async function _exitTradeNow(tradeId, signalId) {
 }
 
 async function _cancelTrade(tradeId, signalId) {
+    if (!isAdminUser()) {
+        alert('Readonly user cannot cancel/update trade state.');
+        return;
+    }
     if (!confirm('Cancel this trade? This only updates the dashboard — make sure you already cancelled orders on Dhan.')) return;
 
     try {
@@ -2040,7 +2157,9 @@ async function loadIndexManualOpenTrades() {
                                 <input id="manual-t2l-${r.trade_id}" class="themed-input rounded px-1 py-0.5 text-2xs" type="number" min="0" value="${r.t2_lots ?? 0}" style="width:42px" title="T2 lots">
                             </td>
                             <td style="display:flex;gap:4px;align-items:center">
-                                <button onclick="modifyIndexManualPlan(${r.trade_id})" class="btn-secondary px-2 py-0.5 rounded text-2xs">Save</button>
+                                ${isAdminUser()
+                                    ? `<button onclick="modifyIndexManualPlan(${r.trade_id})" class="btn-secondary px-2 py-0.5 rounded text-2xs">Save</button>`
+                                    : `<span class="text-2xs" style="color:var(--text-muted)">Readonly</span>`}
                             </td>
                         </tr>
                     `;
@@ -2054,6 +2173,10 @@ async function loadIndexManualOpenTrades() {
 }
 
 async function placeIndexManualTrade(side) {
+    if (!isAdminUser()) {
+        _setIndexManualStatus('Readonly user cannot place orders', true);
+        return;
+    }
     const sideKey = side === 'PE' ? 'pe' : 'ce';
     const strikeEl = document.getElementById(`index-${sideKey}-strike`);
     const lotsEl = document.getElementById(`index-${sideKey}-lots`);
@@ -2131,6 +2254,10 @@ async function placeIndexManualTrade(side) {
 }
 
 async function modifyIndexManualPlan(tradeId) {
+    if (!isAdminUser()) {
+        _setIndexManualStatus('Readonly user cannot modify live plans', true);
+        return;
+    }
     const slInput = document.getElementById(`manual-sl-${tradeId}`);
     const t1Input = document.getElementById(`manual-t1-${tradeId}`);
     const t2Input = document.getElementById(`manual-t2-${tradeId}`);
@@ -2216,6 +2343,11 @@ async function loadIndexSignals(mode = _indexMode) {
 }
 
 async function runIndexScan(mode = _indexMode) {
+    if (!isAdminUser()) {
+        const status = document.getElementById('index-scan-status');
+        if (status) status.textContent = 'Readonly user cannot run scans';
+        return;
+    }
     _indexMode = mode;
     const btn = document.getElementById('btn-index-scan');
     const btnPos = document.getElementById('btn-index-scan-positional');
@@ -2362,11 +2494,13 @@ function renderIndexSignals(data, mode = _indexMode) {
                     <td>${formatLotValue(minProfit)}</td>
                     <td>${formatLotValue(maxLoss)}</td>
                     <td>
-                        <button onclick="toggleTradeTracking(${r.signal_id || 0}, ${!isTracked}, ${JSON.stringify(r).replace(/"/g, '&quot;')})" 
+                        ${isAdminUser()
+                            ? `<button onclick="toggleTradeTracking(${r.signal_id || 0}, ${!isTracked}, ${JSON.stringify(r).replace(/"/g, '&quot;')})" 
                                 class="text-2xs px-2 py-1 rounded" 
                                 style="background:${isTracked ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)'};color:${isTracked ? '#22c55e' : '#6b7280'};border:1px solid ${isTracked ? '#22c55e' : '#6b7280'}">
                             ${isTracked ? 'Tracking ✕' : 'Track'}
-                        </button>
+                        </button>`
+                            : `<span class="text-2xs" style="color:var(--text-muted)">Readonly</span>`}
                     </td>
                     <td title="${trackReason}">
                         <div style="display:flex;flex-direction:column;gap:2px">
@@ -2425,6 +2559,7 @@ function renderIndexSignals(data, mode = _indexMode) {
 }
 
 async function toggleTradeTracking(signalId, enable, signalData) {
+    if (!isAdminUser()) return;
     if (!signalId) return;
     
     let payload = { enable };
@@ -4021,12 +4156,18 @@ function renderVcpSignal(signal) {
 }
 
 // --- Initialize ---
-document.addEventListener('DOMContentLoaded', () => {
+function startApp() {
     initTheme();
     initSidebar();
     loadPnlGuardStatus();
     switchTab('sectors');
     loadCredentialsStatus();
+    applyRoleAccess();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    const ok = await initAuth();
+    if (ok) startApp();
     
     // Make functions globally available for testing
     window.testCredentials = testCredentials;
@@ -4036,6 +4177,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.getCredentialsFromForm = getCredentialsFromForm;
     window.loadCredentialsStatus = loadCredentialsStatus;
     window.generateTokenNow = generateTokenNow;
+    window.loginAppUser = loginAppUser;
+    window.logoutAppUser = logoutAppUser;
     
     console.log('🚀 App initialized. Functions available globally.');
     console.log('🔧 Debug commands:');
