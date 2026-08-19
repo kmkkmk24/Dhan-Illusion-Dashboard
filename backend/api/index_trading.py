@@ -75,6 +75,13 @@ def _is_sensex_name(name: str) -> bool:
     return "sensex" in str(name or "").lower()
 
 
+def _resolve_option_quote_segment(row: dict) -> str:
+    raw = str(row.get("option_quote_segment") or "").upper().strip()
+    if raw in {"NSE_FNO", "BSE_FNO"}:
+        return raw
+    return "BSE_FNO" if _is_sensex_name(str(row.get("index", ""))) else "NSE_FNO"
+
+
 def _market_open_now() -> bool:
     from zoneinfo import ZoneInfo
 
@@ -219,7 +226,7 @@ async def _attach_live_option_ltps(signals: list[dict]) -> None:
         sid = s.get("option_security_id")
         if not sid:
             continue
-        seg = "BSE_FNO" if "sensex" in str(s.get("index", "")).lower() else "NSE_FNO"
+        seg = _resolve_option_quote_segment(s)
         by_segment.setdefault(seg, []).append(str(sid))
 
     if not by_segment["NSE_FNO"] and not by_segment["BSE_FNO"]:
@@ -242,7 +249,7 @@ async def _attach_live_option_ltps(signals: list[dict]) -> None:
             if not sid:
                 s["live_option_ltp"] = None
                 continue
-            seg = "BSE_FNO" if "sensex" in str(s.get("index", "")).lower() else "NSE_FNO"
+            seg = _resolve_option_quote_segment(s)
             ltp = _extract_ltp(seg_quotes.get(seg, {}), str(sid))
             s["live_option_ltp"] = ltp
     finally:
@@ -255,6 +262,7 @@ async def get_index_signals(
     db: Session = Depends(get_db),
 ):
     mode = "positional" if mode == "positional" else "intraday"
+    today = date.today()
     cached = get_index_scan_cache(mode)
     if cached.get("signals"):
         # Merge tracking state from DB into cached signals, and append DB-only active
@@ -282,6 +290,8 @@ async def get_index_signals(
                 .order_by(Signal.current_score.desc())
                 .all()
             )
+            if mode == "intraday":
+                active_db = [s for s in active_db if s.last_updated_date == today]
             existing_ids = {s.get("signal_id") for s in cached_signals if s.get("signal_id")}
             missing = [s for s in active_db if s.id not in existing_ids]
             if missing:
@@ -311,6 +321,7 @@ async def get_index_signals(
                         "premium_sl": s.track_sl_price or (t.sl_price if t else None),
                         "lot_size": t.lot_size if t else None,
                         "option_security_id": s.track_option_security_id or (t.security_id if t else None),
+                        "option_quote_segment": "BSE_FNO" if _is_sensex_name(s.symbol or "") else "NSE_FNO",
                         "is_tracked": s.is_tracked or False,
                         "track_status": s.track_status or "NONE",
                         "track_status_reason": s.track_status_reason or "",
@@ -327,6 +338,8 @@ async def get_index_signals(
         .order_by(Signal.current_score.desc())
         .all()
     )
+    if mode == "intraday":
+        signals = [s for s in signals if s.last_updated_date == today]
     signal_ids = [s.id for s in signals]
     trades = (
         db.query(Trade)
@@ -360,6 +373,7 @@ async def get_index_signals(
             "track_status_reason": s.track_status_reason or "",
             "track_current_price": s.track_current_price,
             "option_security_id": s.track_option_security_id or (t.security_id if t else None),
+            "option_quote_segment": "BSE_FNO" if _is_sensex_name(s.symbol or "") else "NSE_FNO",
             "live_option_ltp": None,
         })
     await _attach_live_option_ltps(fallback)
@@ -369,7 +383,7 @@ async def get_index_signals(
         "summary": {
             "source": "db",
             "count": len(fallback),
-            "date": date.today().isoformat(),
+            "date": today.isoformat(),
             "mode": mode,
         },
     }
@@ -470,6 +484,7 @@ async def get_manual_open_trades(
             "t2_done": bool(plan.get("t2_done")),
             "executed_qty": int(plan.get("executed_qty") or 0),
             "option_security_id": t.security_id,
+            "option_quote_segment": "BSE_FNO" if _is_sensex_name(t.symbol or "") else "NSE_FNO",
             "live_ltp": None,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         })
@@ -804,6 +819,7 @@ async def monitor_manual_targets(
         "trade_id": t.id,
         "index": t.symbol,
         "option_security_id": t.security_id,
+        "option_quote_segment": "BSE_FNO" if _is_sensex_name(t.symbol or "") else "NSE_FNO",
     } for t in trades]
     await _attach_live_option_ltps(quote_rows)
     live_map = {r["trade_id"]: r.get("live_option_ltp") for r in quote_rows}

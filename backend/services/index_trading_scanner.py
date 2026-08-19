@@ -34,8 +34,20 @@ _INDEX_SCAN_CACHE: dict[str, dict[str, Any]] = {
 
 def _cache_scan_result(mode: str, signals: list[dict], summary: dict) -> dict:
     payload = _INDEX_SCAN_CACHE.get(mode) or _INDEX_SCAN_CACHE["intraday"]
+    if _is_cache_stale(payload):
+        payload = _reset_cache(mode)
+
+    # Intraday desk behavior: keep same-day suggestions and append fresh scans.
+    if mode == "intraday":
+        existing = payload.get("signals") or []
+        if signals:
+            payload["signals"] = signals + existing
+        else:
+            payload["signals"] = existing
+    else:
+        payload["signals"] = signals
+
     payload["as_of"] = datetime.now().isoformat(timespec="seconds")
-    payload["signals"] = signals
     payload["summary"] = summary
     return payload
 
@@ -428,6 +440,7 @@ class IndexTradingScanner:
         signal_payload = {
             "index": spec.name,
             "security_id": spec.security_id,
+            "option_quote_segment": spec.option_quote_segment,
             "direction": direction,
             "setup_type": setup["setup_type"],
             "horizon": "intraday",
@@ -529,6 +542,7 @@ class IndexTradingScanner:
         signal_payload = {
             "index": spec.name,
             "security_id": spec.security_id,
+            "option_quote_segment": spec.option_quote_segment,
             "direction": direction,
             "setup_type": setup["setup_type"],
             "horizon": "positional",

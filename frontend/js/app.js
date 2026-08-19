@@ -1921,7 +1921,6 @@ function switchFnoSubTab(mode, btn) {
 
 let _indexMode = 'intraday';
 let _indexSubTab = 'nifty';
-let _indexEntryMode = 'pullback';
 let _trackingTimer = null;
 let _indexManualSetup = null;
 let _indexManualMonitorTimer = null;
@@ -1936,16 +1935,6 @@ function switchIndexSubTab(mode, btn) {
     const pills = document.querySelectorAll('#index-subtab .filter-pill');
     pills.forEach(p => p.classList.toggle('active', p.dataset.value === _indexSubTab));
     refreshIndexManualDesk();
-}
-
-function switchIndexEntryMode(mode, btn) {
-    _indexEntryMode = mode === 'immediate' ? 'immediate' : 'pullback';
-    const pills = document.querySelectorAll('#index-entry-mode .filter-pill');
-    pills.forEach(p => p.classList.toggle('active', p.dataset.value === _indexEntryMode));
-    // Re-render from latest fetched data if available
-    if (window._lastIndexSignalsData) {
-        renderIndexSignals(window._lastIndexSignalsData, _indexMode);
-    }
 }
 
 function _setIndexManualStatus(msg, isError = false) {
@@ -2384,8 +2373,9 @@ function renderIndexSignals(data, mode = _indexMode) {
 
     const signals = data.signals || [];
     const fmt = n => new Intl.NumberFormat('en-IN').format(n);
-    const buyRangePct = 0.03;
-    const immediateRangePct = 0.02;
+    const baseBuyRangePct = 0.03;
+    const liveAnchorRangePct = 0.025;
+    const maxEntryDriftPct = 0.18;
     const exitRangePct = 0.1;
     const hasNumber = value => value !== null && value !== undefined && !Number.isNaN(Number(value));
 
@@ -2431,19 +2421,26 @@ function renderIndexSignals(data, mode = _indexMode) {
             const strikeLabel = `${r.strike || '-'} ${r.direction || ''}`.trim();
             const liveLtp = hasNumber(r.live_option_ltp) ? Number(r.live_option_ltp) : null;
             const basePremium = hasNumber(r.premium) ? Number(r.premium) : liveLtp;
-            let entryLow = hasNumber(r.entry_premium_low) ? Number(r.entry_premium_low) : (hasNumber(basePremium) ? Number(basePremium) * (1 - buyRangePct) : null);
-            let entryHigh = hasNumber(r.entry_premium_high) ? Number(r.entry_premium_high) : (hasNumber(basePremium) ? Number(basePremium) * (1 + buyRangePct) : null);
+            let entryLow = hasNumber(r.entry_premium_low) ? Number(r.entry_premium_low) : (hasNumber(basePremium) ? Number(basePremium) * (1 - baseBuyRangePct) : null);
+            let entryHigh = hasNumber(r.entry_premium_high) ? Number(r.entry_premium_high) : (hasNumber(basePremium) ? Number(basePremium) * (1 + baseBuyRangePct) : null);
+            let entryWasRecentered = false;
 
-            // Immediate mode: show a tight near-market entry zone around live LTP.
-            if (_indexEntryMode === 'immediate' && hasNumber(liveLtp)) {
-                entryLow = Number(liveLtp) * (1 - immediateRangePct);
-                entryHigh = Number(liveLtp) * (1 + immediateRangePct);
+            // Keep scanner's planned entry zone when still relevant.
+            // If market has drifted too far away, recenter around live premium.
+            if (hasNumber(liveLtp) && hasNumber(entryLow) && hasNumber(entryHigh)) {
+                const entryMid = (entryLow + entryHigh) / 2;
+                const driftPct = entryMid > 0 ? Math.abs(liveLtp - entryMid) / entryMid : 0;
+                if (driftPct >= maxEntryDriftPct) {
+                    entryLow = Number(liveLtp) * (1 - liveAnchorRangePct);
+                    entryHigh = Number(liveLtp) * (1 + liveAnchorRangePct);
+                    entryWasRecentered = true;
+                }
             }
             const exitLow = hasNumber(r.exit_premium_low) ? Number(r.exit_premium_low) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 - exitRangePct) : null);
             const exitHigh = hasNumber(r.exit_premium_high) ? Number(r.exit_premium_high) : (hasNumber(r.premium_target) ? Number(r.premium_target) * (1 + exitRangePct) : null);
             const buyRange = hasNumber(entryLow) && hasNumber(entryHigh)
                 ? formatExplicitRange(entryLow, entryHigh)
-                : formatRange(r.premium, buyRangePct);
+                : formatRange(r.premium, baseBuyRangePct);
             const exitRange = hasNumber(exitLow) && hasNumber(exitHigh)
                 ? formatExplicitRange(exitLow, exitHigh)
                 : formatRange(r.premium_target, exitRangePct);
@@ -2467,7 +2464,7 @@ function renderIndexSignals(data, mode = _indexMode) {
                     entryStateColor = '#22c55e';
                     entryStateBg = 'rgba(34,197,94,0.12)';
                 } else if (liveLtp > entryHigh) {
-                    entryStateText = _indexEntryMode === 'immediate' ? 'ABOVE NOW' : 'WAIT PULLBACK';
+                    entryStateText = 'WAIT FOR RANGE';
                     entryStateColor = '#f59e0b';
                     entryStateBg = 'rgba(245,158,11,0.12)';
                 } else if (liveLtp < entryLow) {
@@ -2475,6 +2472,11 @@ function renderIndexSignals(data, mode = _indexMode) {
                     entryStateColor = '#60a5fa';
                     entryStateBg = 'rgba(96,165,250,0.12)';
                 }
+            }
+            if (entryWasRecentered && hasNumber(liveLtp)) {
+                entryStateText = 'LIVE-ALIGNED';
+                entryStateColor = '#a855f7';
+                entryStateBg = 'rgba(168,85,247,0.12)';
             }
             const statusColor = trackStatus === 'HOLD' ? '#3b82f6' : trackStatus === 'EARLY-EXIT' ? '#f97316' : trackStatus === 'SL-HIT' ? '#ef4444' : trackStatus === 'TARGET-HIT' ? '#22c55e' : '#6b7280';
             const statusBg = trackStatus === 'HOLD' ? 'rgba(59,130,246,0.1)' : trackStatus === 'EARLY-EXIT' ? 'rgba(249,115,22,0.1)' : trackStatus === 'SL-HIT' ? 'rgba(239,68,68,0.1)' : trackStatus === 'TARGET-HIT' ? 'rgba(34,197,94,0.1)' : 'rgba(107,114,128,0.1)';
@@ -2508,7 +2510,7 @@ function renderIndexSignals(data, mode = _indexMode) {
                                   style="background:${statusBg};color:${statusColor}">
                                 ${trackStatus === 'NONE' ? '-' : trackStatus}
                             </span>
-                            ${trackReason && trackStatus !== 'NONE' ? `<span style="font-size:0.5rem;color:var(--text-muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${trackReason}</span>` : ''}
+                            ${trackReason && trackStatus !== 'NONE' ? `<span style="font-size:0.5rem;color:var(--text-muted);max-width:240px;white-space:normal;word-break:break-word;line-height:1.25">${trackReason}</span>` : ''}
                         </div>
                     </td>
                 </tr>
