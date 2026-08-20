@@ -10,7 +10,7 @@ Combined score ranks sectors for prioritization.
 
 import asyncio
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import numpy as np
@@ -54,6 +54,7 @@ TIMEFRAME_PERIODS = {
     "weekly": [5, 10, 20],
     "monthly": [20, 30, 50],
 }
+INTRADAY_RS_PERIODS_15M = [5, 10, 20]  # ~75m, 150m, 300m
 
 
 class SectorAnalyzer:
@@ -75,6 +76,7 @@ class SectorAnalyzer:
         if nifty_df is None:
             logger.error("Could not fetch Nifty 50 data for sector analysis")
             return []
+        nifty_intraday = await self._fetch_intraday_15m_data(NIFTY_50_SECURITY_ID)
 
         results = []
 
@@ -85,16 +87,23 @@ class SectorAnalyzer:
                 sector_df = await self._fetch_index_data(security_id, from_date, today)
                 if sector_df is None or len(sector_df) < 50:
                     continue
+                sector_intraday = await self._fetch_intraday_15m_data(security_id)
 
                 # Multi-timeframe relative strength
                 daily_rs = self._compute_rs_for_periods(sector_df, nifty_df, TIMEFRAME_PERIODS["daily"])
                 weekly_rs = self._compute_rs_for_periods(sector_df, nifty_df, TIMEFRAME_PERIODS["weekly"])
                 monthly_rs = self._compute_rs_for_periods(sector_df, nifty_df, TIMEFRAME_PERIODS["monthly"])
+                hourly_rs = self._compute_intraday_rs(sector_intraday, nifty_intraday, fallback=daily_rs)
 
                 pa_score, pa_details = self._compute_price_action(sector_df)
 
-                # Overall RS is weighted average of all timeframes
-                overall_rs = 0.3 * daily_rs + 0.4 * weekly_rs + 0.3 * monthly_rs
+                # Overall RS blends intraday and higher-timeframe momentum.
+                overall_rs = (
+                    0.2 * hourly_rs
+                    + 0.3 * daily_rs
+                    + 0.4 * weekly_rs
+                    + 0.1 * monthly_rs
+                )
                 combined = 0.5 * overall_rs + 0.5 * pa_score
 
                 # Trend classification
@@ -109,6 +118,7 @@ class SectorAnalyzer:
                     "daily_rs": round(daily_rs, 4),
                     "weekly_rs": round(weekly_rs, 4),
                     "monthly_rs": round(monthly_rs, 4),
+                    "hourly_rs": round(hourly_rs, 4),
                     "relative_strength": round(overall_rs, 4),
                     "price_action_score": round(pa_score, 4),
                     "combined_score": round(combined, 4),
@@ -153,14 +163,49 @@ class SectorAnalyzer:
             to_date=to_date,
         )
 
+    async def _fetch_intraday_15m_data(self, security_id: str) -> Optional[pd.DataFrame]:
+        """Fetch recent 15m candles for computing 75m-like hourly RS."""
+        now = datetime.now()
+        start = now - timedelta(days=10)
+        return await self.dhan.get_intraday_data(
+            security_id=security_id,
+            exchange_segment="IDX_I",
+            instrument="INDEX",
+            interval=15,
+            from_date=start.strftime("%Y-%m-%d %H:%M:%S"),
+            to_date=now.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    def _compute_intraday_rs(
+        self,
+        sector_df: Optional[pd.DataFrame],
+        nifty_df: Optional[pd.DataFrame],
+        *,
+        fallback: float = 0.0,
+    ) -> float:
+        if sector_df is None or nifty_df is None or sector_df.empty or nifty_df.empty:
+            return fallback
+        try:
+            sector_close = sector_df["close"].astype(float).values
+            nifty_close = nifty_df["close"].astype(float).values
+            return self._compute_rs_from_closes(sector_close, nifty_close, INTRADAY_RS_PERIODS_15M) or fallback
+        except Exception:
+            return fallback
+
     def _compute_rs_for_periods(
         self, sector_df: pd.DataFrame, nifty_df: pd.DataFrame, periods: list[int]
     ) -> float:
         """Compute average relative strength across a set of lookback periods."""
-        sector_close = sector_df["close"].values
-        nifty_close = nifty_df["close"].values
+        sector_close = sector_df["close"].astype(float).values
+        nifty_close = nifty_df["close"].astype(float).values
+        return self._compute_rs_from_closes(sector_close, nifty_close, periods)
 
+    def _compute_rs_from_closes(
+        self, sector_close: np.ndarray, nifty_close: np.ndarray, periods: list[int]
+    ) -> float:
         min_len = min(len(sector_close), len(nifty_close))
+        if min_len < 2:
+            return 0.0
         sector_close = sector_close[-min_len:]
         nifty_close = nifty_close[-min_len:]
 

@@ -4,6 +4,7 @@ Auto-scan scheduler for F&O directional scanner.
 Schedule:
   - Every 30 minutes during market hours (9:45, 10:15, ..., 3:15)
   - Once at 4:00 PM post-market
+  - Daily sector analysis report at 4:10 PM
   - Weekdays only (Mon-Fri)
   - Skips NSE holidays
 """
@@ -45,6 +46,8 @@ NSE_HOLIDAYS_2026 = {
 _scheduler: AsyncIOScheduler | None = None
 _last_scan_result: dict = {}
 _last_scan_time: datetime | None = None
+_last_sector_report_time: datetime | None = None
+_last_sector_report_result: dict = {}
 
 
 def is_market_day() -> bool:
@@ -120,6 +123,7 @@ async def _run_scheduled_fno_scan():
     logger.info("=== Scheduled F&O scan starting ===")
 
     from backend.models.database import get_session_factory
+    from backend.models.tables import SectorScore
     from backend.services.fno_scanner import FnoScanner
     from backend.services.sector_analyzer import SectorAnalyzer
     from backend.services import instrument_manager
@@ -134,8 +138,28 @@ async def _run_scheduled_fno_scan():
         logger.info(f"Revalidation: {reval['revalidated']} checked, "
                      f"{reval['invalidated']} invalidated")
 
-        analyzer = SectorAnalyzer(db)
-        sector_results = await analyzer.analyze_sectors()
+        latest_date = db.query(SectorScore.date).order_by(SectorScore.date.desc()).first()
+        sector_results: list[dict] = []
+        if latest_date:
+            rows = (
+                db.query(SectorScore)
+                .filter(SectorScore.date == latest_date[0])
+                .order_by(SectorScore.combined_score.desc())
+                .all()
+            )
+            sector_results = [
+                {"sector_name": s.sector_name, "combined_score": s.combined_score}
+                for s in rows
+            ]
+
+        # Fallback when daily sector job has not yet populated today's snapshot.
+        if not sector_results:
+            analyzer = SectorAnalyzer(db)
+            live_results = await analyzer.analyze_sectors()
+            sector_results = [
+                {"sector_name": s.get("sector_name"), "combined_score": s.get("combined_score")}
+                for s in live_results
+            ]
 
         if not sector_results:
             logger.warning("Scheduled scan: sector analysis returned no results")
@@ -173,6 +197,63 @@ async def _run_scheduled_fno_scan():
         _last_scan_time = datetime.now()
     finally:
         db.close()
+
+
+async def _run_daily_sector_report():
+    """Run one full sector analysis snapshot and send Telegram summary."""
+    global _last_sector_report_time, _last_sector_report_result
+
+    if not is_market_day():
+        logger.info("Skipping daily sector report — not a market day")
+        return
+
+    from backend.models.database import get_session_factory
+    from backend.api.settings import set_sector_analysis_cache
+    from backend.config import get_config
+    from backend.services.sector_analyzer import SectorAnalyzer
+    from backend.services.telegram_notifier import (
+        send_sector_report,
+        telegram_is_configured,
+    )
+
+    session_factory = get_session_factory()
+    db = session_factory()
+    try:
+        analyzer = SectorAnalyzer(db)
+        results = await analyzer.analyze_sectors()
+        set_sector_analysis_cache(results, as_of=date.today())
+
+        top_n = int((get_config().get("sector") or {}).get("top_sectors", 5))
+
+        notify_result = {"ok": False, "reason": "telegram_not_configured"}
+        if telegram_is_configured():
+            notify_result = await send_sector_report(results, report_date=date.today(), top_n=top_n)
+
+        _last_sector_report_result = {
+            "sectors_analyzed": len(results),
+            "telegram": notify_result,
+        }
+        _last_sector_report_time = datetime.now()
+        logger.info(
+            "Daily sector report complete: sectors=%s telegram_ok=%s",
+            len(results),
+            bool(notify_result.get("ok")),
+        )
+    except Exception as e:
+        logger.error("Daily sector report failed: %s", e, exc_info=True)
+        _last_sector_report_time = datetime.now()
+        _last_sector_report_result = {"error": str(e)}
+    finally:
+        db.close()
+
+
+async def _poll_telegram_callbacks():
+    """Poll Telegram callback queries for sector drill-down buttons."""
+    from backend.services.telegram_notifier import process_telegram_callbacks
+
+    result = await process_telegram_callbacks()
+    if result.get("ok") and result.get("handled"):
+        logger.info("Processed %s Telegram drill-down callbacks", result.get("handled"))
 
 
 def start_scheduler():
@@ -226,6 +307,20 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Daily sector analysis report + Telegram push.
+    _scheduler.add_job(
+        _run_daily_sector_report,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour=16,
+            minute=10,
+            timezone="Asia/Kolkata",
+        ),
+        id="sector_report_daily",
+        name="Sector report (daily 4:10 PM)",
+        replace_existing=True,
+    )
+
     # Token refresh every day at 6:00 AM (before market opens)
     _scheduler.add_job(
         _refresh_dhan_token,
@@ -237,6 +332,16 @@ def start_scheduler():
         ),
         id="token_refresh",
         name="Dhan token refresh (6 AM daily)",
+        replace_existing=True,
+    )
+
+    # Telegram callback poller for inline button drill-downs.
+    _scheduler.add_job(
+        _poll_telegram_callbacks,
+        "interval",
+        seconds=20,
+        id="telegram_callback_poll",
+        name="Telegram callback poller",
         replace_existing=True,
     )
 
@@ -273,5 +378,7 @@ def get_scheduler_status() -> dict:
         "jobs": jobs,
         "last_scan_time": str(_last_scan_time) if _last_scan_time else None,
         "last_scan_result": _last_scan_result,
+        "last_sector_report_time": str(_last_sector_report_time) if _last_sector_report_time else None,
+        "last_sector_report_result": _last_sector_report_result,
         "is_market_day": is_market_day(),
     }

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from datetime import date
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -345,10 +346,23 @@ async def run_custom_scan(request_data: dict, db: Session = Depends(get_db)):
 
 # In-memory cache for the latest sector analysis results (includes multi-timeframe data)
 _sector_analysis_cache: list[dict] = []
+_sector_analysis_cache_date: date | None = None
+_sector_chart_cache: dict[str, dict] = {}
+
+
+def set_sector_analysis_cache(results: list[dict], as_of: date | None = None) -> None:
+    """Update in-memory cache for sector analysis payloads."""
+    global _sector_analysis_cache, _sector_analysis_cache_date
+    _sector_analysis_cache = list(results or [])
+    _sector_analysis_cache_date = as_of or date.today()
+
+
+def _has_fresh_sector_cache() -> bool:
+    return bool(_sector_analysis_cache and _sector_analysis_cache_date == date.today())
 
 
 @router.get("/sectors/{sector_name}/chart")
-async def get_sector_chart_data(sector_name: str):
+async def get_sector_chart_data(sector_name: str, db: Session = Depends(get_db)):
     """Fetch weekly OHLCV data for a sector index with EMAs."""
     import pandas as pd
     from backend.services.sector_analyzer import SECTOR_INDICES
@@ -357,23 +371,84 @@ async def get_sector_chart_data(sector_name: str):
 
     security_id = SECTOR_INDICES.get(sector_name)
     if not security_id:
-        return {"candles": [], "ema20": [], "ema50": []}
+        return _sector_chart_cache.get(sector_name, {"candles": [], "ema20": [], "ema50": []})
 
-    client = DhanClient()
     to_date = date.today()
     from_date = to_date - timedelta(days=900)  # ~2.5 years of daily data
 
-    try:
-        df = await client.get_historical_daily_data(
-            security_id=security_id,
-            exchange_segment="IDX_I",
-            instrument="INDEX",
-            from_date=from_date,
-            to_date=to_date,
+    async def _fetch_chart_df():
+        client = DhanClient()
+        try:
+            return await client.get_historical_daily_data(
+                security_id=security_id,
+                exchange_segment="IDX_I",
+                instrument="INDEX",
+                from_date=from_date,
+                to_date=to_date,
+            )
+        finally:
+            await client.close()
+
+    def _chart_from_sector_scores() -> dict:
+        from backend.models.tables import SectorScore
+
+        rows = (
+            db.query(SectorScore)
+            .filter(SectorScore.sector_name == sector_name)
+            .order_by(SectorScore.date.asc())
+            .all()
         )
-        await client.close()
+        if len(rows) < 3:
+            return {"candles": [], "ema20": [], "ema50": []}
+
+        closes = [float((r.combined_score or 0) * 100.0) for r in rows]
+        candles = []
+        prev = closes[0]
+        for i, r in enumerate(rows):
+            close_val = closes[i]
+            open_val = prev
+            hi = max(open_val, close_val) + 0.8
+            lo = min(open_val, close_val) - 0.8
+            candles.append({
+                "t": r.date.isoformat(),
+                "o": round(open_val, 2),
+                "h": round(hi, 2),
+                "l": round(lo, 2),
+                "c": round(close_val, 2),
+                "v": 1,
+            })
+            prev = close_val
+
+        close_series = pd.Series([c["c"] for c in candles], dtype=float)
+        ema20 = close_series.ewm(span=20, adjust=False).mean().round(2).tolist()
+        ema50 = close_series.ewm(span=50, adjust=False).mean().round(2).tolist()
+        return {
+            "candles": candles,
+            "ema20": ema20,
+            "ema50": ema50,
+            "synthetic": True,
+        }
+
+    try:
+        df = await _fetch_chart_df()
 
         if df is None or df.empty:
+            # Auto-recover from expired token and retry once.
+            try:
+                from backend.services.token_manager import _renew_and_save_token
+                await _renew_and_save_token()
+                df = await _fetch_chart_df()
+            except Exception:
+                pass
+
+        if df is None or df.empty:
+            cached = _sector_chart_cache.get(sector_name)
+            if cached:
+                return {**cached, "stale": True}
+            fallback = _chart_from_sector_scores()
+            if fallback.get("candles"):
+                _sector_chart_cache[sector_name] = fallback
+                return fallback
             return {"candles": [], "ema20": [], "ema50": []}
 
         # Aggregate daily -> weekly
@@ -408,26 +483,33 @@ async def get_sector_chart_data(sector_name: str):
             ema20_out.append(round(float(ema20[i]), 2))
             ema50_out.append(round(float(ema50[i]), 2))
 
-        return {"candles": candles, "ema20": ema20_out, "ema50": ema50_out}
+        payload = {"candles": candles, "ema20": ema20_out, "ema50": ema50_out}
+        _sector_chart_cache[sector_name] = payload
+        return payload
     except Exception as e:
-        await client.close()
+        cached = _sector_chart_cache.get(sector_name)
+        if cached:
+            return {**cached, "stale": True, "error": str(e)}
+        fallback = _chart_from_sector_scores()
+        if fallback.get("candles"):
+            _sector_chart_cache[sector_name] = fallback
+            return {**fallback, "stale": True, "error": str(e)}
         return {"candles": [], "ema20": [], "ema50": [], "error": str(e)}
 
 
 @router.post("/scan/sectors")
 async def run_sector_analysis(db: Session = Depends(get_db)):
     """Manually trigger sector momentum analysis with multi-timeframe RS."""
-    global _sector_analysis_cache
     analyzer = SectorAnalyzer(db)
     results = await analyzer.analyze_sectors()
-    _sector_analysis_cache = results
+    set_sector_analysis_cache(results)
     return {"message": f"Sector analysis complete. {len(results)} sectors analyzed.", "sectors": results}
 
 
 @router.get("/sectors/top")
 def get_top_sector_scores(db: Session = Depends(get_db)):
     """Get the latest top-ranked sectors."""
-    if _sector_analysis_cache:
+    if _has_fresh_sector_cache():
         from backend.config import get_config
         top_n = get_config()["sector"]["top_sectors"]
         return _sector_analysis_cache[:top_n]
@@ -438,6 +520,7 @@ def get_top_sector_scores(db: Session = Depends(get_db)):
             "sector_name": s.sector_name,
             "combined_score": s.combined_score,
             "relative_strength": s.relative_strength,
+            "hourly_rs": s.daily_rs if s.daily_rs is not None else s.relative_strength,
             "price_action_score": s.price_action_score,
             "is_above_20ema": s.is_above_20ema,
             "is_above_50ema": s.is_above_50ema,
@@ -451,7 +534,7 @@ def get_top_sector_scores(db: Session = Depends(get_db)):
 @router.get("/sectors/all")
 async def get_all_sectors(db: Session = Depends(get_db)):
     """Get all sector scores for the Sector Analysis tab (uses cached multi-timeframe data)."""
-    if _sector_analysis_cache:
+    if _has_fresh_sector_cache():
         return _sector_analysis_cache
 
     # Fallback to DB data if no cached results
@@ -477,6 +560,7 @@ async def get_all_sectors(db: Session = Depends(get_db)):
             "sector_name": s.sector_name,
             "combined_score": s.combined_score,
             "relative_strength": s.relative_strength,
+            "hourly_rs": s.daily_rs if s.daily_rs is not None else s.relative_strength,
             "price_action_score": s.price_action_score,
             "daily_rs": s.daily_rs if s.daily_rs is not None else s.relative_strength,
             "weekly_rs": s.weekly_rs if s.weekly_rs is not None else s.relative_strength,
@@ -574,6 +658,53 @@ async def scheduler_resume():
     from backend.services.scheduler import start_scheduler
     start_scheduler()
     return {"message": "Scheduler resumed"}
+
+
+@router.post("/scheduler/sector-report/run")
+async def run_sector_report_now():
+    """Manually trigger the daily sector analysis report flow."""
+    from backend.services.scheduler import _run_daily_sector_report, get_scheduler_status
+
+    await _run_daily_sector_report()
+    return {
+        "message": "Sector report run completed",
+        "status": get_scheduler_status(),
+    }
+
+
+@router.post("/sectors/notify")
+async def notify_latest_sector_report(db: Session = Depends(get_db)):
+    """Send Telegram message using latest available sector analysis snapshot."""
+    from datetime import date as dt_date
+    from backend.config import get_config
+    from backend.services.telegram_notifier import (
+        send_sector_report,
+        telegram_is_configured,
+    )
+
+    if not telegram_is_configured():
+        return {"ok": False, "message": "Telegram is not configured"}
+
+    sectors = await get_all_sectors(db)
+    if not sectors:
+        return {"ok": False, "message": "No sector data available. Refresh sectors first."}
+
+    report_date = dt_date.today()
+    try:
+        raw_date = sectors[0].get("date")
+        if raw_date:
+            report_date = dt_date.fromisoformat(str(raw_date))
+    except Exception:
+        pass
+
+    top_n = int((get_config().get("sector") or {}).get("top_sectors", 5))
+    telegram = await send_sector_report(sectors, report_date=report_date, top_n=top_n)
+    return {
+        "ok": bool(telegram.get("ok")),
+        "telegram": telegram,
+        "sectors_analyzed": len(sectors),
+        "message": "Telegram sent" if telegram.get("ok") else "Telegram send failed",
+    }
 
 
 @router.get("/pnl-exit")

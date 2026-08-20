@@ -32,7 +32,8 @@ function applyRoleAccess() {
         'btn-index-scan', 'btn-index-scan-positional',
         'btn-index-ce-buy', 'btn-index-pe-buy',
         'btn-index-manual-refresh', 'btn-scan-swing',
-        'btn-scan-fno', 'btn-refresh-instruments', 'btn-value-refresh'
+        'btn-scan-fno', 'btn-refresh-instruments', 'btn-value-refresh',
+        'btn-refresh-sectors', 'btn-sector-telegram'
     ];
     adminButtons.forEach(id => {
         const btn = document.getElementById(id);
@@ -337,7 +338,10 @@ function switchTab(tab) {
     document.getElementById(`content-${tab}`).classList.remove('hidden');
     document.getElementById(`tab-${tab}`).classList.add('active');
 
-    if (tab === 'sectors') loadSectorsTab();
+    if (tab === 'sectors') {
+        loadSectorsTab();
+        syncSectorTelegramToggle();
+    }
     if (tab === 'swing') { loadSignals('swing'); showVcpInfo(); }
     if (tab === 'fno') { loadFnoSignals(); loadSchedulerStatus(); switchFnoSubTab(fnoSubTab); }
     if (tab === 'index') { loadIndexSignals(); }
@@ -351,6 +355,53 @@ function switchTab(tab) {
 }
 
 // --- Sector Analysis Tab ---
+
+const SECTOR_TELEGRAM_TOGGLE_KEY = 'sector-telegram-on-refresh';
+let _sectorTelegramOnRefresh = localStorage.getItem(SECTOR_TELEGRAM_TOGGLE_KEY) === 'true';
+
+function syncSectorTelegramToggle() {
+    const btn = document.getElementById('btn-sector-telegram');
+    if (!btn) return;
+    btn.textContent = 'T';
+    if (_sectorTelegramOnRefresh) {
+        btn.style.setProperty('border', '1px solid #16a34a', 'important');
+        btn.style.setProperty('background', '#16a34a', 'important');
+        btn.style.setProperty('background-image', 'none', 'important');
+        btn.style.setProperty('color', '#ffffff', 'important');
+    } else {
+        btn.style.setProperty('border', '1px solid rgba(107,114,128,0.45)', 'important');
+        btn.style.setProperty('background', 'rgba(107,114,128,0.12)', 'important');
+        btn.style.setProperty('background-image', 'none', 'important');
+        btn.style.setProperty('color', 'var(--text-muted)', 'important');
+    }
+    btn.style.fontWeight = '700';
+    btn.title = _sectorTelegramOnRefresh
+        ? 'Telegram on refresh: ON (click to disable)'
+        : 'Telegram on refresh: OFF (click to enable)';
+}
+
+function toggleSectorTelegramOnRefresh() {
+    if (!isAdminUser()) return;
+    _sectorTelegramOnRefresh = !_sectorTelegramOnRefresh;
+    localStorage.setItem(SECTOR_TELEGRAM_TOGGLE_KEY, _sectorTelegramOnRefresh ? 'true' : 'false');
+    syncSectorTelegramToggle();
+    const statusEl = document.getElementById('sector-tab-status');
+    if (statusEl) {
+        statusEl.textContent = _sectorTelegramOnRefresh
+            ? 'Telegram notify on refresh: ON'
+            : 'Telegram notify on refresh: OFF';
+        statusEl.style.color = _sectorTelegramOnRefresh ? '#22c55e' : 'var(--text-muted)';
+    }
+}
+
+async function notifySectorReportToTelegram() {
+    const response = await fetch(`${API_BASE}/api/settings/sectors/notify`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || 'Telegram notification failed');
+    }
+    return data;
+}
 
 async function loadSectorsTab() {
     try {
@@ -380,6 +431,7 @@ function showScoreTooltip(event, s) {
     hideScoreTooltip();
 
     const rs = Math.round((s.relative_strength || 0) * 100);
+    const hrs = Math.round((s.hourly_rs || s.daily_rs || s.relative_strength || 0) * 100);
     const drs = Math.round((s.daily_rs || 0) * 100);
     const wrs = Math.round((s.weekly_rs || 0) * 100);
     const mrs = Math.round((s.monthly_rs || 0) * 100);
@@ -416,9 +468,10 @@ function showScoreTooltip(event, s) {
                     Sector return vs Nifty 50 return
                 </div>
                 <div style="font-size:0.5rem;display:flex;flex-direction:column;gap:2px">
+                    <span>Hourly 75m (20% wt): <b style="color:${hrs >= 65 ? '#22c55e' : hrs >= 40 ? '#eab308' : '#ef4444'}">${hrs}%</b></span>
                     <span>Daily (30% wt): <b style="color:${drs >= 65 ? '#22c55e' : drs >= 40 ? '#eab308' : '#ef4444'}">${drs}%</b></span>
                     <span>Weekly (40% wt): <b style="color:${wrs >= 65 ? '#22c55e' : wrs >= 40 ? '#eab308' : '#ef4444'}">${wrs}%</b></span>
-                    <span>Monthly (30% wt): <b style="color:${mrs >= 65 ? '#22c55e' : mrs >= 40 ? '#eab308' : '#ef4444'}">${mrs}%</b></span>
+                    <span>Monthly (10% wt): <b style="color:${mrs >= 65 ? '#22c55e' : mrs >= 40 ? '#eab308' : '#ef4444'}">${mrs}%</b></span>
                 </div>
             </div>
             <div style="flex:1">
@@ -582,6 +635,7 @@ function renderSectorsTable(sectors) {
                 <span class="font-medium" style="font-size:0.6rem;color:var(--text-primary)">${s.sector_name}</span>
                 <span style="font-size:0.45rem;color:var(--text-muted);margin-left:2px">${s.stock_count}</span>
             </td>
+            <td>${rsBar(s.hourly_rs || s.daily_rs || s.relative_strength)}</td>
             <td>${rsBar(s.daily_rs || s.relative_strength)}</td>
             <td>${rsBar(s.weekly_rs || s.relative_strength)}</td>
             <td>${rsBar(s.monthly_rs || s.relative_strength)}</td>
@@ -601,6 +655,7 @@ function renderSectorsTable(sectors) {
         <table class="data-table">
             <thead><tr>
                 <th>Sector</th>
+                <th>Hourly</th>
                 <th>Daily</th>
                 <th>Weekly</th>
                 <th>Monthly</th>
@@ -856,8 +911,13 @@ function drawWeeklyChart(ctx, w, h, candles, ema20, ema50) {
 
 async function runSectorAnalysisFromTab() {
     const btn = document.getElementById('btn-refresh-sectors');
+    const statusEl = document.getElementById('sector-tab-status');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Analyzing...';
+    if (statusEl) {
+        statusEl.textContent = 'Refreshing sectors...';
+        statusEl.style.color = 'var(--text-muted)';
+    }
 
     try {
         const response = await fetch(`${API_BASE}/api/settings/scan/sectors`, { method: 'POST' });
@@ -865,14 +925,67 @@ async function runSectorAnalysisFromTab() {
         if (data.sectors) {
             window._lastSectors = data.sectors;
             renderSectorsTable(data.sectors);
+            if (statusEl) {
+                statusEl.textContent = `Refreshed ${data.sectors.length} sectors`;
+                statusEl.style.color = '#22c55e';
+            }
         } else {
             loadSectorsTab();
+            if (statusEl) {
+                statusEl.textContent = 'Refresh complete';
+                statusEl.style.color = '#22c55e';
+            }
+        }
+        if (_sectorTelegramOnRefresh) {
+            if (statusEl) {
+                statusEl.textContent = 'Refreshed. Sending Telegram...';
+                statusEl.style.color = 'var(--text-muted)';
+            }
+            try {
+                const notify = await notifySectorReportToTelegram();
+                if (statusEl) {
+                    statusEl.textContent = `Refreshed + Telegram sent${notify?.telegram?.message_id ? ` (msg #${notify.telegram.message_id})` : ''}`;
+                    statusEl.style.color = '#22c55e';
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.textContent = `Refreshed, Telegram failed: ${err.message}`;
+                    statusEl.style.color = '#ef4444';
+                }
+            }
         }
     } catch (err) {
         console.error('Sector analysis failed:', err);
+        if (statusEl) {
+            statusEl.textContent = `Refresh failed: ${err.message}`;
+            statusEl.style.color = '#ef4444';
+        }
     } finally {
         btn.disabled = false;
         btn.innerHTML = 'Refresh Sectors';
+    }
+}
+
+async function sendSectorReportToTelegram() {
+    if (!isAdminUser()) return;
+    const statusEl = document.getElementById('sector-tab-status');
+    if (statusEl) {
+        statusEl.textContent = 'Sending Telegram report...';
+        statusEl.style.color = 'var(--text-muted)';
+    }
+
+    try {
+        const notify = await notifySectorReportToTelegram();
+        if (statusEl) {
+            statusEl.textContent = `Telegram sent${notify?.telegram?.message_id ? ` (msg #${notify.telegram.message_id})` : ''}`;
+            statusEl.style.color = '#22c55e';
+        }
+        loadSectorsTab();
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `Telegram send failed: ${err.message}`;
+            statusEl.style.color = '#ef4444';
+        }
     }
 }
 

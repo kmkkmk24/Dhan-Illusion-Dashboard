@@ -134,8 +134,13 @@
         <section id="content-sectors" class="tab-content flex flex-col flex-1 overflow-hidden">
             <div class="flex items-center justify-between mb-2 flex-shrink-0">
                 <h2 class="text-sm font-bold" style="color:var(--text-heading)">Sector Analysis</h2>
-                <button onclick="runSectorAnalysisFromTab()" id="btn-refresh-sectors"
-                    class="btn-primary px-3 py-1 rounded-lg text-2xs">Refresh Sectors</button>
+                <div class="flex items-center gap-2">
+                    <span id="sector-tab-status" class="text-2xs" style="color:var(--text-muted)"></span>
+                    <button onclick="toggleSectorTelegramOnRefresh()" id="btn-sector-telegram"
+                        class="btn-secondary px-2 py-1 rounded-lg text-2xs" title="Send Telegram after refresh">T</button>
+                    <button onclick="runSectorAnalysisFromTab()" id="btn-refresh-sectors"
+                        class="btn-primary px-3 py-1 rounded-lg text-2xs">Refresh Sectors</button>
+                </div>
             </div>
             <div class="flex gap-3 flex-1 overflow-hidden">
                 <div id="sectors-table-wrap" class="w-1/2 flex-shrink-0 overflow-auto">
