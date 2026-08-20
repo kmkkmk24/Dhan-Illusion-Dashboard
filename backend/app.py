@@ -7,7 +7,16 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import FRONTEND_DIR
 from backend.models.database import init_db, get_session_factory
-from backend.api import scanner, watchlist, journal, settings, index_trading, value_investing, auth
+from backend.api import (
+    scanner,
+    watchlist,
+    journal,
+    settings,
+    index_trading,
+    value_investing,
+    auth,
+    market_direction,
+)
 from backend.services.auth_service import ensure_seed_users, get_user_by_session
 
 logging.basicConfig(
@@ -82,6 +91,7 @@ app.include_router(journal.router)
 app.include_router(settings.router)
 app.include_router(index_trading.router)
 app.include_router(value_investing.router)
+app.include_router(market_direction.router)
 
 
 # Health check
