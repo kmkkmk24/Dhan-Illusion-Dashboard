@@ -342,6 +342,7 @@ function switchTab(tab) {
         loadSectorsTab();
         syncSectorTelegramToggle();
     }
+    if (tab === 'market-direction') { loadMarketDirection(); }
     if (tab === 'swing') { loadSignals('swing'); showVcpInfo(); }
     if (tab === 'fno') { loadFnoSignals(); loadSchedulerStatus(); switchFnoSubTab(fnoSubTab); }
     if (tab === 'index') { loadIndexSignals(); }
@@ -352,6 +353,223 @@ function switchTab(tab) {
         clearInterval(_indexManualMonitorTimer);
         _indexManualMonitorTimer = null;
     }
+}
+
+// --- Sector Analysis Tab ---
+
+function _marketBiasColor(bias) {
+    const b = String(bias || '').toUpperCase();
+    if (b.includes('STRONGLY BULLISH')) return '#16a34a';
+    if (b.includes('BULLISH')) return '#22c55e';
+    if (b.includes('STRONGLY BEARISH')) return '#dc2626';
+    if (b.includes('BEARISH')) return '#ef4444';
+    return '#eab308';
+}
+
+function _marketBiasBadge(bias) {
+    return `<span class="text-2xs px-2 py-1 rounded-full" style="background:rgba(99,102,241,0.12);color:${_marketBiasColor(bias)};font-weight:700">${bias || 'SIDEWAYS / RANGE-BOUND'}</span>`;
+}
+
+async function sendMarketDirectionHistoryToTelegram(predictionId, btnEl = null) {
+    if (!predictionId) return;
+    const statusEl = document.getElementById('market-direction-status');
+    const oldText = btnEl ? btnEl.textContent : '';
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = 'Sending...';
+    }
+    try {
+        const resp = await fetch(`${API_BASE}/api/market-direction/history/${predictionId}/notify`, {
+            method: 'POST',
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data?.ok) throw new Error(data?.message || data?.detail || 'Send failed');
+        if (statusEl) {
+            statusEl.textContent = 'AI prediction sent to Telegram';
+            statusEl.style.color = '#22c55e';
+        }
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `Telegram send failed: ${err.message}`;
+            statusEl.style.color = '#ef4444';
+        }
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = oldText || 'Send';
+        }
+    }
+}
+
+let _marketDirectionSubTab = 'today';
+let _marketDirectionDashboard = null;
+
+function switchMarketDirectionSubTab(tab, btnEl = null) {
+    _marketDirectionSubTab = tab || 'today';
+    const wrap = document.getElementById('market-direction-subtab');
+    if (wrap) {
+        wrap.querySelectorAll('.filter-pill').forEach((el) => {
+            el.classList.toggle('active', el.dataset.value === _marketDirectionSubTab);
+        });
+    } else if (btnEl) {
+        document.querySelectorAll('#market-direction-subtab .filter-pill').forEach((el) => el.classList.remove('active'));
+        btnEl.classList.add('active');
+    }
+    if (_marketDirectionDashboard) renderMarketDirection(_marketDirectionDashboard);
+}
+
+async function loadMarketDirection(force = false) {
+    const statusEl = document.getElementById('market-direction-status');
+    const contentEl = document.getElementById('market-direction-content');
+    const btn = document.getElementById('btn-market-direction-refresh');
+    if (!statusEl || !contentEl) return;
+    if (btn) btn.disabled = true;
+    statusEl.textContent = 'Analyzing NIFTY and SENSEX...';
+    statusEl.style.color = 'var(--text-muted)';
+    if (force) {
+        contentEl.innerHTML = `<div class="p-8 text-center text-2xs" style="color:var(--text-muted)"><span class="spinner"></span> Refreshing prediction...</div>`;
+    }
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/market-direction/dashboard${force ? '?force_refresh=true' : ''}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.detail || 'Prediction failed');
+        _marketDirectionDashboard = data;
+        renderMarketDirection(data);
+        const ts = data.as_of ? new Date(data.as_of).toLocaleString() : 'n/a';
+        statusEl.textContent = `Updated: ${ts}`;
+        statusEl.style.color = '#22c55e';
+    } catch (err) {
+        contentEl.innerHTML = `<div class="p-6 text-center text-2xs" style="color:#ef4444">Market direction load failed: ${err.message}</div>`;
+        statusEl.textContent = 'Prediction unavailable';
+        statusEl.style.color = '#ef4444';
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function renderMarketDirection(data) {
+    const contentEl = document.getElementById('market-direction-content');
+    if (!contentEl) return;
+    const section = _marketDirectionSubTab || 'today';
+    const todayPred = data?.today || {};
+    const tomorrowPred = data?.tomorrow || {};
+    const history = Array.isArray(data?.history) ? data.history : [];
+    const streak = data?.streak || {};
+    const timing = data?.timing || {};
+
+    const buildPredictionCard = (pred, heading, opts = {}) => {
+        const showOpenType = !!opts.showOpenType;
+        const probs = pred?.probabilities || {};
+        const breadth = pred?.breadth || {};
+        const indices = Array.isArray(pred?.indices) ? pred.indices : [];
+        const targetDate = pred?.target_date ? new Date(pred.target_date).toLocaleDateString() : '-';
+        const indexCards = indices.map((idx) => {
+            const tf = idx.timeframe_scores || {};
+            const notes = Array.isArray(idx.notes) ? idx.notes : [];
+            const snap = idx.technical_snapshot || {};
+            const session = idx.session_context || {};
+            const tfText = Object.entries(tf).map(([k, v]) => `${k.toUpperCase()}: ${(Number(v) * 100).toFixed(0)}`).join(' · ') || '-';
+            const unavailableNote = idx.analysis_ok ? '' : `<div class="text-2xs mb-1" style="color:#f59e0b">Data unavailable${idx.reason ? ` (${idx.reason})` : ''}</div>`;
+            const openType = session.open_type || 'UNKNOWN';
+            const gapText = Number.isFinite(Number(session.gap_pct)) ? ` (${Number(session.gap_pct).toFixed(2)}%)` : '';
+            return `
+                <div class="glass-card-sm p-2" style="min-width:280px">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-semibold" style="color:var(--text-heading)">${idx.index || '-'}</span>
+                        ${_marketBiasBadge(idx.bias)}
+                    </div>
+                    ${unavailableNote}
+                    ${showOpenType ? `<div class="text-2xs mb-1" style="color:var(--text-muted)">Open Type: <b style="color:var(--text-heading)">${openType}${gapText}</b></div>` : ''}
+                    <div class="text-2xs mb-1" style="color:var(--text-muted)">Confidence: <b style="color:var(--text-heading)">${idx.confidence ?? 0}%</b></div>
+                    <div class="text-2xs mb-1" style="color:var(--text-muted)">TF scores: ${tfText}</div>
+                    <div class="text-2xs mb-1" style="color:var(--text-muted)">
+                        EMA20 ${snap.ema20 ?? '-'} · EMA50 ${snap.ema50 ?? '-'} · EMA200 ${snap.ema200 ?? '-'} · RSI ${snap.rsi14 ?? '-'} · ADX ${snap.adx14 ?? '-'}
+                    </div>
+                    <div class="text-2xs" style="color:var(--text-muted)">
+                        ${(notes || []).slice(0, 3).map(n => `• ${n}`).join('<br/>') || '-'}
+                    </div>
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="mb-3">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-xs font-semibold" style="color:var(--text-heading)">${heading} (${targetDate})</span>
+                    ${_marketBiasBadge(pred.market_bias)}
+                    <span class="text-2xs" style="color:var(--text-muted)">Confidence:</span>
+                    <span class="text-xs font-bold" style="color:var(--text-heading)">${pred.confidence ?? 0}%</span>
+                </div>
+                <div class="text-2xs" style="color:var(--text-muted)">
+                    Probabilities → Bullish: <b>${probs.bullish ?? '-' }%</b> · Sideways: <b>${probs.sideways ?? '-' }%</b> · Bearish: <b>${probs.bearish ?? '-' }%</b>
+                </div>
+                <div class="text-2xs mt-1" style="color:var(--text-muted)">
+                    Sector breadth: <b>${breadth.strong_count ?? 0}/${breadth.total ?? 0}</b> strong sectors (${Math.round((Number(breadth.strong_share || 0)) * 100)}%)
+                </div>
+                <div class="text-2xs mt-1" style="color:var(--text-muted)">
+                    ${timing.note || ''}
+                </div>
+                ${pred.model_note ? `<div class="text-2xs mt-1" style="color:var(--text-muted)">${pred.model_note}</div>` : ''}
+                ${pred.note ? `<div class="text-2xs mt-1" style="color:#f59e0b">${pred.note}</div>` : ''}
+            </div>
+            <div class="grid md:grid-cols-2 gap-2">${indexCards || '<div class="text-2xs" style="color:var(--text-muted)">No index analysis data.</div>'}</div>
+            <div class="text-2xs mt-3" style="color:var(--text-muted)">${pred.disclaimer || ''}</div>
+        `;
+    };
+
+    const historyRows = history.map((row) => {
+        const result = String(row.result || 'PENDING').toUpperCase();
+        const resultColor = result === 'HIT' ? '#22c55e' : result === 'MISS' ? '#ef4444' : '#eab308';
+        const sendBtn = row.id
+            ? `<button class="btn-secondary px-2 py-1 rounded text-2xs" onclick="sendMarketDirectionHistoryToTelegram(${Number(row.id)}, this)">Send</button>`
+            : '-';
+        return `
+            <tr>
+                <td class="px-2 py-1">${row.target_date ? new Date(row.target_date).toLocaleDateString() : '-'}</td>
+                <td class="px-2 py-1">${(row.horizon || '-').toUpperCase()}</td>
+                <td class="px-2 py-1">${_marketBiasBadge(row.predicted_bias)}</td>
+                <td class="px-2 py-1">${row.confidence ?? 0}%</td>
+                <td class="px-2 py-1">${row.actual_bias ? _marketBiasBadge(row.actual_bias) : '<span class="text-2xs" style="color:var(--text-muted)">Pending</span>'}</td>
+                <td class="px-2 py-1"><span class="text-2xs font-semibold" style="color:${resultColor}">${result}</span></td>
+                <td class="px-2 py-1">${sendBtn}</td>
+            </tr>
+        `;
+    }).join('');
+
+    let sectionHtml = '';
+    if (section === 'tomorrow') {
+        sectionHtml = buildPredictionCard(tomorrowPred, 'Tomorrow', { showOpenType: false });
+    } else if (section === 'history') {
+        const streakValue = Number.isFinite(Number(streak.current)) ? Number(streak.current) : 0;
+        const streakHorizon = String(streak.horizon || 'tomorrow').toUpperCase();
+        sectionHtml = `
+            <div class="text-2xs mb-2" style="color:var(--text-muted)">Algo prediction vs actual market outcome.</div>
+            <div class="text-2xs mb-2" style="color:var(--text-heading)">Current HIT Streak (${streakHorizon}): <b style="color:#22c55e">${streakValue}</b> day(s)</div>
+            <div class="overflow-auto">
+                <table class="w-full text-2xs">
+                    <thead>
+                        <tr style="color:var(--text-muted);border-bottom:1px solid rgba(148,163,184,0.25)">
+                            <th class="text-left px-2 py-1">Date</th>
+                            <th class="text-left px-2 py-1">Type</th>
+                            <th class="text-left px-2 py-1">Predicted</th>
+                            <th class="text-left px-2 py-1">Confidence</th>
+                            <th class="text-left px-2 py-1">Actual</th>
+                            <th class="text-left px-2 py-1">Result</th>
+                            <th class="text-left px-2 py-1">Telegram</th>
+                        </tr>
+                    </thead>
+                    <tbody>${historyRows || '<tr><td colspan="7" class="px-2 py-3" style="color:var(--text-muted)">No history yet.</td></tr>'}</tbody>
+                </table>
+            </div>
+        `;
+    } else {
+        sectionHtml = buildPredictionCard(todayPred, 'Today', { showOpenType: true });
+    }
+
+    contentEl.innerHTML = `
+        ${sectionHtml}
+        <div class="text-2xs mt-3" style="color:var(--text-muted)">Today prediction reliable after: <b>${timing.today_reliable_after_ist || '09:45'} IST</b></div>
+    `;
 }
 
 // --- Sector Analysis Tab ---

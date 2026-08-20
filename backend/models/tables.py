@@ -162,6 +162,32 @@ class SectorScore(Base):
     )
 
 
+class MarketDirectionPrediction(Base):
+    __tablename__ = "market_direction_predictions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    target_date = Column(Date, nullable=False, index=True)
+    horizon = Column(String(20), nullable=False, index=True)  # today | tomorrow
+    generated_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    market_bias = Column(String(40), nullable=False)
+    confidence = Column(Float, default=0.0)
+    score = Column(Float, default=0.0)
+    bullish_prob = Column(Float, default=0.0)
+    sideways_prob = Column(Float, default=0.0)
+    bearish_prob = Column(Float, default=0.0)
+    details_json = Column(Text)
+
+    actual_bias = Column(String(40))
+    actual_score = Column(Float)
+    hit = Column(Boolean)
+    evaluated_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("idx_md_target_horizon", "target_date", "horizon"),
+    )
+
+
 class Trade(Base):
     __tablename__ = "trades"
 

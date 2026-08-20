@@ -67,6 +67,12 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-6"/></svg>
                 <span>Sectors</span>
             </div>
+            <div onclick="switchTab('market-direction')" id="tab-market-direction" class="nav-item">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 3v18h18"/><path d="M6 14l4-4 3 2 5-6"/><circle cx="18" cy="6" r="1.5"/>
+                </svg>
+                <span>Market Direction</span>
+            </div>
             <div onclick="switchTab('index')" id="tab-index" class="nav-item">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 4-6"/></svg>
                 <span>Index Trading</span>
@@ -161,6 +167,29 @@
                     </div>
                     <div id="sector-stocks-list" class="glass-card-sm overflow-auto flex-1"></div>
                 </div>
+            </div>
+        </section>
+
+        <!-- Market Direction Tab -->
+        <section id="content-market-direction" class="tab-content hidden flex flex-col flex-1 overflow-auto">
+            <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <div>
+                    <h2 class="text-sm font-bold" style="color:var(--text-heading)">Market Direction</h2>
+                    <p class="text-2xs" style="color:var(--text-muted)">NIFTY + SENSEX trend prediction using multi-timeframe technical analysis</p>
+                </div>
+                <button onclick="loadMarketDirection(true)" id="btn-market-direction-refresh"
+                    class="btn-primary px-3 py-1 rounded-lg text-2xs">Refresh</button>
+            </div>
+            <div class="mb-2">
+                <span id="market-direction-status" class="text-2xs" style="color:var(--text-muted)"></span>
+            </div>
+            <div class="filter-pills mb-2 flex-shrink-0" id="market-direction-subtab">
+                <button class="filter-pill active" data-value="today" onclick="switchMarketDirectionSubTab('today', this)">Today</button>
+                <button class="filter-pill" data-value="tomorrow" onclick="switchMarketDirectionSubTab('tomorrow', this)">Tomorrow</button>
+                <button class="filter-pill" data-value="history" onclick="switchMarketDirectionSubTab('history', this)">History</button>
+            </div>
+            <div id="market-direction-content" class="glass-card p-3 overflow-auto flex-1">
+                <div class="p-8 text-center text-2xs" style="color:var(--text-muted)">Loading market direction...</div>
             </div>
         </section>
 
